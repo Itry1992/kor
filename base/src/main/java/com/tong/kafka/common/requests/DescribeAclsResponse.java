@@ -1,0 +1,158 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.tong.kafka.common.requests;
+
+import com.tong.kafka.common.acl.AclPermissionType;
+import com.tong.kafka.common.message.DescribeAclsResponseData;
+import com.tong.kafka.common.acl.AccessControlEntry;
+import com.tong.kafka.common.acl.AclBinding;
+import com.tong.kafka.common.acl.AclOperation;
+import com.tong.kafka.common.errors.UnsupportedVersionException;
+import com.tong.kafka.common.protocol.ApiKeys;
+import com.tong.kafka.common.protocol.ByteBufferAccessor;
+import com.tong.kafka.common.protocol.Errors;
+import com.tong.kafka.common.resource.PatternType;
+import com.tong.kafka.common.resource.ResourcePattern;
+import com.tong.kafka.common.resource.ResourceType;
+
+import java.nio.ByteBuffer;
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+public class DescribeAclsResponse extends AbstractResponse {
+
+    private final DescribeAclsResponseData data;
+
+    public DescribeAclsResponse(DescribeAclsResponseData data, short version) {
+        super(ApiKeys.DESCRIBE_ACLS);
+        this.data = data;
+        validate(Optional.of(version));
+    }
+
+    // Skips version validation, visible for testing
+    DescribeAclsResponse(DescribeAclsResponseData data) {
+        super(ApiKeys.DESCRIBE_ACLS);
+        this.data = data;
+        validate(Optional.empty());
+    }
+
+    @Override
+    public DescribeAclsResponseData data() {
+        return data;
+    }
+
+    @Override
+    public int throttleTimeMs() {
+        return data.throttleTimeMs();
+    }
+
+    @Override
+    public void maybeSetThrottleTimeMs(int throttleTimeMs) {
+        data.setThrottleTimeMs(throttleTimeMs);
+    }
+
+    public ApiError error() {
+        return new ApiError(Errors.forCode(data.errorCode()), data.errorMessage());
+    }
+
+    @Override
+    public Map<Errors, Integer> errorCounts() {
+        return errorCounts(Errors.forCode(data.errorCode()));
+    }
+
+    public List<DescribeAclsResponseData.DescribeAclsResource> acls() {
+        return data.resources();
+    }
+
+    public static DescribeAclsResponse parse(ByteBuffer buffer, short version) {
+        return new DescribeAclsResponse(new DescribeAclsResponseData(new ByteBufferAccessor(buffer), version), version);
+    }
+
+    @Override
+    public boolean shouldClientThrottle(short version) {
+        return version >= 1;
+    }
+
+    private void validate(Optional<Short> version) {
+        if (version.isPresent() && version.get() == 0) {
+            final boolean unsupported = acls().stream()
+                .anyMatch(acl -> acl.patternType() != PatternType.LITERAL.code());
+            if (unsupported) {
+                throw new UnsupportedVersionException("Version 0 only supports literal resource pattern types");
+            }
+        }
+
+        for (DescribeAclsResponseData.DescribeAclsResource resource : acls()) {
+            if (resource.patternType() == PatternType.UNKNOWN.code() || resource.resourceType() == ResourceType.UNKNOWN.code())
+                throw new IllegalArgumentException("Contain UNKNOWN elements");
+            for (DescribeAclsResponseData.AclDescription acl : resource.acls()) {
+                if (acl.operation() == AclOperation.UNKNOWN.code() || acl.permissionType() == AclPermissionType.UNKNOWN.code()) {
+                    throw new IllegalArgumentException("Contain UNKNOWN elements");
+                }
+            }
+        }
+    }
+
+    private static Stream<AclBinding> aclBindings(DescribeAclsResponseData.DescribeAclsResource resource) {
+        return resource.acls().stream().map(acl -> {
+            ResourcePattern pattern = new ResourcePattern(
+                    ResourceType.fromCode(resource.resourceType()),
+                    resource.resourceName(),
+                    PatternType.fromCode(resource.patternType()));
+            AccessControlEntry entry = new AccessControlEntry(
+                    acl.principal(),
+                    acl.host(),
+                    AclOperation.fromCode(acl.operation()),
+                    AclPermissionType.fromCode(acl.permissionType()));
+            return new AclBinding(pattern, entry);
+        });
+    }
+
+    public static List<AclBinding> aclBindings(List<DescribeAclsResponseData.DescribeAclsResource> resources) {
+        return resources.stream().flatMap(DescribeAclsResponse::aclBindings).collect(Collectors.toList());
+    }
+
+    public static List<DescribeAclsResponseData.DescribeAclsResource> aclsResources(Collection<AclBinding> acls) {
+        Map<ResourcePattern, List<AccessControlEntry>> patternToEntries = new HashMap<>();
+        for (AclBinding acl : acls) {
+            patternToEntries.computeIfAbsent(acl.pattern(), v -> new ArrayList<>()).add(acl.entry());
+        }
+        List<DescribeAclsResponseData.DescribeAclsResource> resources = new ArrayList<>(patternToEntries.size());
+        for (Entry<ResourcePattern, List<AccessControlEntry>> entry : patternToEntries.entrySet()) {
+            ResourcePattern key = entry.getKey();
+            List<DescribeAclsResponseData.AclDescription> aclDescriptions = new ArrayList<>();
+            for (AccessControlEntry ace : entry.getValue()) {
+                DescribeAclsResponseData.AclDescription ad = new DescribeAclsResponseData.AclDescription()
+                    .setHost(ace.host())
+                    .setOperation(ace.operation().code())
+                    .setPermissionType(ace.permissionType().code())
+                    .setPrincipal(ace.principal());
+                aclDescriptions.add(ad);
+            }
+            DescribeAclsResponseData.DescribeAclsResource dar = new DescribeAclsResponseData.DescribeAclsResource()
+                .setResourceName(key.name())
+                .setPatternType(key.patternType().code())
+                .setResourceType(key.resourceType().code())
+                .setAcls(aclDescriptions);
+            resources.add(dar);
+        }
+        return resources;
+    }
+}

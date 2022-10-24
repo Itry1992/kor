@@ -1,0 +1,25 @@
+plugins {
+    id "scala"
+}
+compileScala {
+    options.fork = true
+    options.forkOptions.jvmArgs += ["-Xss8M"]
+}
+
+dependencies {
+    implementation project(':base')
+    implementation project(':server_common')
+    implementation libs.scalaLibrary
+    implementation libs.scalaLogging
+    implementation libs.scalaCollectionCompat
+    implementation libs.scalaJava8Compat
+    implementation libs.scalaReflect
+    implementation libs.scalaLogging
+    implementation libs.metrics_core
+    implementation libs.slf4japi
+    implementation libs.jacksonDatabind
+    implementation libs.jacksonModuleScala
+    implementation libs.jacksonDataformatCsv
+    implementation libs.jacksonJDK8Datatypes
+
+}

@@ -1,0 +1,26 @@
+plugins {
+    id 'java'
+}
+
+group 'org.example'
+version '1.0-SNAPSHOT'
+//所有的项目均继承的配置
+allprojects {
+    //指定仓库
+    repositories {
+        maven {
+            url 'https://maven.aliyun.com/repository/public/'
+        }
+        mavenCentral()
+    }
+    apply plugin: "java"
+    apply plugin: "java-library"
+
+    apply from: "$rootDir/gradle/dependencies.gradle"
+
+}
+
+subprojects {
+
+    dependencies {}
+}

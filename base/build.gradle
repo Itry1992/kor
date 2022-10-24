@@ -1,0 +1,15 @@
+dependencies {
+    implementation libs.log4jcore
+    implementation libs.slf4japi
+    implementation libs.slf4j_log4j12
+    implementation libs.jackson_databind
+    implementation libs.metrics_core
+    implementation libs.scala_logging_3
+    implementation libs.lz4_java
+    implementation libs.zstd_jni
+    implementation libs.jose4j
+    implementation libs.snappy_java
+    implementation libs.junit_jupiter_api
+    implementation libs.junit_jupiter_engine
+
+}
