@@ -1150,6 +1150,7 @@ public class TransactionManager {
         }
 
         @Override
+        //事务相关请求回调处理
         public void onComplete(ClientResponse response) {
             if (response.requestHeader().correlationId() != inFlightRequestCorrelationId) {
                 fatalError(new RuntimeException("Detected more than one in-flight transactional request."));
@@ -1234,6 +1235,7 @@ public class TransactionManager {
             }
         }
 
+        //InitProducerId 回调处理
         @Override
         public void handleResponse(AbstractResponse response) {
             InitProducerIdResponse initProducerIdResponse = (InitProducerIdResponse) response;

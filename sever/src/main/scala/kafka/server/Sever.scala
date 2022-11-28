@@ -55,7 +55,7 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, val port: Int, val c
       val apiVersionManager = new BrokerApiVersionManager()
       val point = new EndPoint("localhost", port, new ListenerName("ll_"), SecurityProtocol.PLAINTEXT)
       socketServer = new SocketServer(config = config, endpoints = List(point), metrics, time = time, credentialProvider, apiVersionManager)
-      val apiHandler = new AdapterRequestHandler(socketServer.requestChannel, apiVersionManager)
+      val apiHandler = new AdapterRequestHandler(socketServer.requestChannel, apiVersionManager, time)
       requestHandlerPool = new KafkaRequestHandlerPool(brokerId = brokerId, requestChannel = socketServer.requestChannel, apis = apiHandler, time, numThreads = config.numIoThreads, requestHandlerAvgIdleMetricName = s"requestHandlerAvgIdleMetric", logAndThreadNamePrefix = s"${SampleAcceptor.ThreadPrefix}")
       socketServer.enableRequestProcessing()
       _brokerState = BrokerState.RUNNING

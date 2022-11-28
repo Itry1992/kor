@@ -294,7 +294,7 @@ private[kafka] class Processor(
                 val context = new RequestContext(header, connectionId, channel.socketAddress,
                   channel.principal, listenerName, securityProtocol,
                   channel.channelMetadataRegistry.clientInformation, isPrivilegedListener, channel.principalSerde)
-                //构建请求，从receive 中获取buffer,然后根据APIKey进行反序列化
+               //构建请求，从receive 中获取buffer,然后根据APIKey进行反序列化
                 val req = new RequestChannel.Request(processor = id, context = context,
                   startTimeNanos = nowNanos, memoryPool, receive.payload, requestChannel.metrics, None)
 

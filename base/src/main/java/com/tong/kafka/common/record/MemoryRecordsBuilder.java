@@ -68,7 +68,7 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     // from previous batches before appending any records.
     private float estimatedCompressionRatio = 1.0F;
 
-    // Used to append records, may compress data on the fly
+    // Used to append records, 可能会即时压缩数据
     private DataOutputStream appendStream;
     private boolean isTransactional;
     private long producerId;

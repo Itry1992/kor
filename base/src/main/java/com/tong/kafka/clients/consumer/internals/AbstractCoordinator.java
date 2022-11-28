@@ -223,6 +223,8 @@ public abstract class AbstractCoordinator implements Closeable {
         return ensureCoordinatorReady(time.timer(0), true);
     }
 
+    //确认查找Coordinator结束，在该过程中，
+    //Coordinator负责offset,partition 管理等
     private synchronized boolean ensureCoordinatorReady(final com.tong.kafka.common.utils.Timer timer, boolean disableWakeup) {
         if (!coordinatorUnknown())
             return true;
@@ -233,7 +235,9 @@ public abstract class AbstractCoordinator implements Closeable {
                 fatalFindCoordinatorException = null;
                 throw fatalException;
             }
+            //构建请求，设置回调
             final RequestFuture<Void> future = lookupCoordinator();
+            //调用一次client.poll,处理可能存在的发送和返回
             client.poll(future, timer, disableWakeup);
 
             if (!future.isDone()) {
@@ -349,6 +353,7 @@ public abstract class AbstractCoordinator implements Closeable {
     boolean ensureActiveGroup(final com.tong.kafka.common.utils.Timer timer) {
         // always ensure that the coordinator is ready because we may have been disconnected
         // when sending heartbeats and does not necessarily require us to rejoin the group.
+        //在timer超时之前，循环查找可用的Coordinator
         if (!ensureCoordinatorReady(timer)) {
             return false;
         }
@@ -490,6 +495,7 @@ public abstract class AbstractCoordinator implements Closeable {
         this.joinFuture = null;
     }
 
+    //初始化joinGroup请求并且发送它
     private synchronized RequestFuture<ByteBuffer> initiateJoinGroup() {
         // we store the join future in case we are woken up by the user after beginning the
         // rebalance in the call to poll below. This ensures that we do not mistakenly attempt
@@ -675,6 +681,7 @@ public abstract class AbstractCoordinator implements Closeable {
         }
     }
 
+    //非leader 逻辑，构建SyncGroupResquet
     private RequestFuture<ByteBuffer> onJoinFollower() {
         // send follower's sync group with an empty assignment
         SyncGroupRequest.Builder requestBuilder =
@@ -692,6 +699,7 @@ public abstract class AbstractCoordinator implements Closeable {
         return sendSyncGroupRequest(requestBuilder);
     }
 
+    //当选leader后，进行customer分配，并发送Sync_Group请求，通知Coordinator分配结果
     private RequestFuture<ByteBuffer> onLeaderElected(JoinGroupResponse joinResponse) {
         try {
             // perform the leader synchronization and send back the assignment for the group

@@ -302,7 +302,7 @@ public class Metadata implements Closeable {
 
     /**
      * Transform a MetadataResponse into a new MetadataCache instance.
-     * 处理MetadataResponse ，转换为MetadataCache 示例
+     * 处理MetadataResponse ，转换为MetadataCache
      */
     private MetadataCache handleMetadataResponse(MetadataResponse metadataResponse, boolean isPartialUpdate, long nowMs) {
         // All encountered topics.

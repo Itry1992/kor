@@ -1189,6 +1189,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     /**
      * @throws KafkaException if the rebalance callback throws exception
      */
+    //包括检查新的数据、做一些必要的 commit 以及 offset  重置操作
     private ConsumerRecords<K, V> poll(final Timer timer, final boolean includeMetadataInTimeout) {
         acquireAndEnsureOpen();
         try {
@@ -1197,19 +1198,23 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             if (this.subscriptions.hasNoSubscriptionOrUserAssignment()) {
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
             }
-
+            //循环到超时或者拉取到数据
             do {
+                //元数据&join_group，sync_group,offset_fetch 部分
                 client.maybeTriggerWakeup();
-
-                if (includeMetadataInTimeout) {
+                //进行可能的元数据更新
+//                if (false) {
+                if(includeMetadataInTimeout){
                     // try to update assignment metadata BUT do not need to block on the timer for join group
+                    //如果协调者没有就绪（未JOIN_GROUP）直接跳过，不在等待
+                    //如果元数据没有准备好之前，后续的消息拉取会被暂停，直到下一次poll检查
                     updateAssignmentMetadataIfNeeded(timer, false);
                 } else {
                     while (!updateAssignmentMetadataIfNeeded(time.timer(Long.MAX_VALUE), true)) {
                         log.warn("Still waiting for metadata");
                     }
                 }
-
+                //数据拉取部分
                 final Fetch<K, V> fetch = pollForFetches(timer);
                 if (!fetch.isEmpty()) {
                     // before returning the fetched records, we can send off the next round of fetches
@@ -1242,7 +1247,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         if (coordinator != null && !coordinator.poll(timer, waitForJoinGroup)) {
             return false;
         }
-
+        //更新从哪儿开始拉取消息
+        //初次更新时，会发送OFFSET_FETCH请求
+        //如果offset_fetch 返回offset -1,此时视未为找到提交记录，然后根据auto.offset.reset 配置 重置offset
+        //重置offset 会发送OFFSET_LIST请求
         return updateFetchPositions(timer);
     }
 

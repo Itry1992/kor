@@ -100,6 +100,7 @@ public class Fetcher<K, V> implements Closeable {
     private final ConsumerMetadata metadata;
     private final FetchManagerMetrics sensors;
     private final SubscriptionState subscriptions;
+    //完成的请求，上一次拉取的结果会被丢到这个队列中
     private final ConcurrentLinkedQueue<CompletedFetch> completedFetches;
     private final BufferSupplier decompressionBufferSupplier = BufferSupplier.create();
     private final Deserializer<K> keyDeserializer;
@@ -245,6 +246,7 @@ public class Fetcher<K, V> implements Closeable {
                                         fetchTarget.id());
                                 return;
                             }
+                            //
                             if (!handler.handleResponse(response, resp.requestHeader().apiVersion())) {
                                 if (response.error() == Errors.FETCH_SESSION_TOPIC_ID_ERROR) {
                                     metadata.requestUpdate();
@@ -1162,6 +1164,7 @@ public class Fetcher<K, V> implements Closeable {
             }
 
             // Use the preferred read replica if set, otherwise the partition's leader
+            //决定从哪儿读取数据，一般情况下上一次拉取会返回preferred_read_replica,如果preferred 离线了使用leader拉取
             Node node = selectReadReplica(partition, leaderOpt.get(), currentTimeMs);
             if (client.isUnavailable(node)) {
                 client.maybeThrowAuthFailure(node);
@@ -1235,6 +1238,7 @@ public class Fetcher<K, V> implements Closeable {
                 // we are interested in this fetch only if the beginning offset matches the
                 // current consumed position
                 SubscriptionState.FetchPosition position = subscriptions.position(tp);
+                //
                 if (position == null || position.offset != fetchOffset) {
                     log.debug("Discarding stale fetch response for partition {} since its offset {} does not match " +
                             "the expected offset {}", tp, fetchOffset, position);

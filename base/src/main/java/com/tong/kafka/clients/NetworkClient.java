@@ -540,7 +540,7 @@ public class NetworkClient implements KafkaClient {
             completeResponses(responses);
             return responses;
         }
-
+        //可能存在的元数据更新
         long metadataTimeout = metadataUpdater.maybeUpdate(now);
         try {
             this.selector.poll(Utils.min(timeout, metadataTimeout, defaultRequestTimeoutMs));

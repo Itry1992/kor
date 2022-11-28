@@ -267,7 +267,7 @@ public class RecordAccumulator {
         TopicInfo topicInfo = topicInfoMap.computeIfAbsent(topic, k -> new TopicInfo(logContext, k, batchSize));
 
         // We keep track of the number of appending thread to make sure we do not miss batches in
-        // abortIncompleteBatches().
+//         abortIncompleteBatches().
         appendsInProgress.incrementAndGet();
         ByteBuffer buffer = null;
         if (headers == null) headers = Record.EMPTY_HEADERS;
@@ -857,10 +857,12 @@ public class RecordAccumulator {
                 ProducerIdAndEpoch producerIdAndEpoch =
                     transactionManager != null ? transactionManager.producerIdAndEpoch() : null;
                 if (producerIdAndEpoch != null && !batch.hasSequence()) {
+                    // 这个 batch 还没有 seq number 信息
                     // If the producer id/epoch of the partition do not match the latest one
                     // of the producer, we update it and reset the sequence. This should be
                     // only done when all its in-flight batches have completed. This is guarantee
                     // in `shouldStopDrainBatchesForPartition`.
+                    //如果事务开启，阻塞到获取一个pid
                     transactionManager.maybeUpdateProducerIdAndEpoch(batch.topicPartition);
 
                     // If the batch already has an assigned sequence, then we should not change the producer id and

@@ -1341,6 +1341,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * RecordMetadata.UNKNOWN_PARTITION to indicate any partition
      * can be used (the partition is then calculated by built-in
      * partitioning logic).
+     *
+     * 计算record的分区，
+     * 如果有自定义分区器，调用它
+     * 否则根据key来计算分区
+     * 如果没有key,返回RecordMetadata.UNKNOWN_PARTITION 来表示可以使用任意分区
      */
     private int partition(ProducerRecord<K, V> record, byte[] serializedKey, byte[] serializedValue, Cluster cluster) {
         if (record.partition() != null)

@@ -482,6 +482,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @return true iff the operation succeeded
      * @throws KafkaException if the rebalance callback throws an exception
      */
+    //1.处理可能存在的周期性offset commits
+    //2.进行JOIN_GROUP和SYNC_GROUP
     public boolean poll(Timer timer, boolean waitForJoinGroup) {
         maybeUpdateSubscriptionMetadata();
 
@@ -494,11 +496,18 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             }
             // Always update the heartbeat last poll time so that the heartbeat thread does not leave the
             // group proactively due to application inactivity even if (say) the coordinator cannot be found.
+            //1.更新PollTime
+            //2.如果需要发送心跳（根据上一次发送心事件判断），唤醒心跳线程
+            //3.如果心跳线程发生异常，抛出这个异常
+            //ps:心跳线程在JOIN_GROUP成功值前处于休眠状态,发生异常也会转为休眠状态
             pollHeartbeat(timer.currentTimeMs());
+            //直到timer过期之前，检查协调器就绪，如果过期了直接返回false,不阻塞
+            //在检查过程会发送FindCoordinator请求
+            //收到FindCoordinator response后，会在回调中设置coordinator,并且尝试初始化连接
             if (coordinatorUnknownAndUnreadySync(timer)) {
                 return false;
             }
-
+            //判断是否需要进行重新执行GroupJoin,或者正在执行join中，元数据发生改变时或者rejoinNeeded 初始值为true
             if (rejoinNeededOrPending()) {
                 // due to a race condition between the initial metadata fetch and the initial rebalance,
                 // we need to ensure that the metadata is fresh before joining initially. This ensures
@@ -523,6 +532,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                 }
 
                 // if not wait for join group, we would just use a timer of 0
+                //确认小肥猪可用
+                // 内部会在Coordinator 就绪后执行join_group & sync_group
                 if (!ensureActiveGroup(waitForJoinGroup ? timer : time.timer(0L))) {
                     // since we may use a different timer in the callee, we'd still need
                     // to update the original timer's current time after the call
@@ -1125,10 +1136,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @param offsets The offsets to be committed
      * @return If the offset commit was successfully sent and a successful response was received from
      * the coordinator
-     * @throws AuthorizationException if the consumer is not authorized to the group
-     *                                                               or to any of the specified partitions. See the exception for more details
-     * @throws CommitFailedException                                 if an unrecoverable error occurs before the commit can be completed
-     * @throws FencedInstanceIdException                             if a static member gets fenced
+     * @throws AuthorizationException    if the consumer is not authorized to the group
+     *                                   or to any of the specified partitions. See the exception for more details
+     * @throws CommitFailedException     if an unrecoverable error occurs before the commit can be completed
+     * @throws FencedInstanceIdException if a static member gets fenced
      */
     public boolean commitOffsetsSync(Map<TopicPartition, OffsetAndMetadata> offsets, Timer timer) {
         invokeCompletedOffsetCommitCallbacks();
