@@ -2,7 +2,7 @@
 
 在消息拉取和发送的过程中，可以分为 produce,customer,broker 三个角色。
 
-<img src=".\img\kafak_架构概述.png" title="" alt="" data-align="inline">
+![](img/kafak_架构概述.png)
 
 ## 名词解释
 
@@ -475,9 +475,20 @@ throttle_time_ms => INT32
 
 ## 消费者初始化&rebalance流程概述
 
-kafka消费者在同一个组内，一个partition最多只能被一个消费者消费，来保证消息的顺序性消费，同时可以实现kafka的拉取消息offset由customer维护。为了保证一个partition最多只能被一个消费者消费，在有customer启动/宕机的时，会发生rebalance。
+kafka消费者在同一个组内，一个partition最多只能被一个消费者消费，来保证消息的顺序性消费，同时可以实现kafka的拉取消息offset由customer维护。为了保证一个partition最多只能被一个消费者消费，在有customer启动/宕机的时，会发生rebalance。再均衡和消息拉取中会涉及以下名词：
 
- ![](./img/customer_init.png)
+- cooridinator
+  消费组协调者，负责对消费组内的消费者进行分配结果协调，同时管理offset,组成员等，由特定的broker承担。
+
+- customer group
+  消费组，不同的消费组互相独立，相同的消费组内的消费者共享消费进度（committed_offset）
+
+- customer group leader
+  消费者leader,负责在rebalance时，根据分区分配策略计算分配结果。
+
+消费组启动/再均衡流程：
+
+  ![](./img/customer_init.png)
 
 - 查找或等到coordinator可用
   
@@ -508,6 +519,18 @@ kafka消费者在同一个组内，一个partition最多只能被一个消费者
 #### coordinator状态图
 
 ![](./img/coordinator1.png)
+
+- initialRebalance
+  初始化在均衡，一般由第一个消费者加入组时触发,初始化完毕后进入preparingRebalance状态
+
+- preparingRebalance
+  准备在均衡，等待到超时时间后，对join_group请求进行响应，然后进入awaitingSync状态
+
+- awaitingSync
+  此时等待customer group leader 发起Sync_group请求。customer group leader 发起sync_group请求后，响应其他customer的sync_group请求，进入stable状态
+
+- stable 
+  稳定状态，组内成员发生改变时进入preparingRebalance状态，进行下一轮的再均衡
 
 ## FIND_COORDINATOR
 
@@ -562,7 +585,7 @@ FindCoordinator Response (Version: 4) => throttle_time_ms [coordinators] TAG_BUF
 
 #### 功能
 
-coordinator就绪后，初始化或被通知再均衡后，通过该协议进入再均衡流程。
+在coordinator就绪后，customer初始化或被通知再均衡时，customer通过该协议进入再均衡流程。
 
 #### 请求
 
@@ -933,3 +956,198 @@ LeaveGroup Response (Version: 5) => throttle_time_ms error_code [members] TAG_BU
 | error_code        | The error code, or 0 if there was no error.                                                                                                  |
 | _tagged_fields    | The tagged fields                                                                                                                            |
 | _tagged_fields    | The tagged fields                                                                                                                            |
+
+## FETCH
+
+##### 功能
+
+消费者主动拉取消息的核心API。也是副本同步时拉取消息的核心api
+
+##### 请求
+
+```
+Fetch Request (Version: 13) => replica_id max_wait_ms min_bytes max_bytes isolation_level session_id session_epoch [topics] [forgotten_topics_data] rack_id TAG_BUFFER 
+  replica_id => INT32
+  max_wait_ms => INT32
+  min_bytes => INT32
+  max_bytes => INT32
+  isolation_level => INT8
+  session_id => INT32
+  session_epoch => INT32
+  topics => topic_id [partitions] TAG_BUFFER 
+    topic_id => UUID
+    partitions => partition current_leader_epoch fetch_offset last_fetched_epoch log_start_offset partition_max_bytes TAG_BUFFER 
+      partition => INT32
+      current_leader_epoch => INT32
+      fetch_offset => INT64
+      last_fetched_epoch => INT32
+      log_start_offset => INT64
+      partition_max_bytes => INT32
+  forgotten_topics_data => topic_id [partitions] TAG_BUFFER 
+    topic_id => UUID
+    partitions => INT32
+  rack_id => COMPACT_STRING
+```
+
+| FIELD                 | DESCRIPTION                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| replica_id            | The broker ID of the follower, of -1 if this request is from a consumer.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| max_wait_ms           | The maximum time in milliseconds to wait for the response.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| min_bytes             | The minimum bytes to accumulate in the response.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| max_bytes             | The maximum bytes to fetch. See KIP-74 for cases where this limit may not be honored.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| isolation_level       | This setting controls the visibility of transactional records. Using READ_UNCOMMITTED (isolation_level = 0) makes all records visible. With READ_COMMITTED (isolation_level = 1), non-transactional and COMMITTED transactional records are visible. To be more concrete, READ_COMMITTED returns all data from offsets smaller than the current LSO (last stable offset), and enables the inclusion of the list of aborted transactions in the result, which allows consumers to discard ABORTED transactional records |
+| session_id            | The fetch session ID.//session_id 由服务端控制// *INVALID_SESSION_ID = 0**//消费者*会对这个 topic 所属的 session 做验证                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| session_epoch         | The fetch session epoch, which is used for ordering requests in a session.由客户端递增，                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| topics                | The topics to fetch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| topic_id              | The unique topic ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| partitions            | The partitions to fetch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| partition             | The partition index.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| current_leader_epoch  | The current leader epoch of the partition.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| fetch_offset          | The message offset.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| last_fetched_epoch    | The epoch of the last fetched record or -1 if there is none                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| log_start_offset      | The earliest available offset of the follower replica. The field is only used when the request is sent by the follower.                                                                                                                                                                                                                                                                                                                                                                                                |
+| partition_max_bytes   | The maximum bytes to fetch from this partition. See KIP-74 for cases where this limit may not be honored.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| _tagged_fields        | The tagged fields                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| _tagged_fields        | The tagged fields                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| forgotten_topics_data | In an incremental fetch request, the partitions to remove.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| topic_id              | The unique topic ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| partitions            | The partitions indexes to forget.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| _tagged_fields        | The tagged fields                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| rack_id               | Rack ID of the consumer making this request                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| _tagged_fields        | The tagged fields                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+
+##### 响应
+
+```
+Fetch Response (Version: 13) => throttle_time_ms error_code session_id [responses] TAG_BUFFER 
+  throttle_time_ms => INT32
+  error_code => INT16
+  session_id => INT32
+  responses => topic_id [partitions] TAG_BUFFER 
+    topic_id => UUID
+    partitions => partition_index error_code high_watermark last_stable_offset log_start_offset [aborted_transactions] preferred_read_replica records TAG_BUFFER 
+      partition_index => INT32
+      error_code => INT16
+      high_watermark => INT64
+      last_stable_offset => INT64
+      log_start_offset => INT64
+      aborted_transactions => producer_id first_offset TAG_BUFFER 
+        producer_id => INT64
+        first_offset => INT64
+      preferred_read_replica => INT32
+      records => COMPACT_RECORDS
+```
+
+| FIELD                  | DESCRIPTION                                                                                                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| throttle_time_ms       | The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.                                             |
+| error_code             | The top level response error code.                                                                                                                                                       |
+| session_id             | The fetch session ID, or 0 if this is not part of a fetch session.                                                                                                                       |
+| responses              | The response topics.                                                                                                                                                                     |
+| topic_id               | The unique topic ID                                                                                                                                                                      |
+| partitions             | The topic partitions.                                                                                                                                                                    |
+| partition_index        | The partition index.                                                                                                                                                                     |
+| error_code             | The error code, or 0 if there was no fetch error.                                                                                                                                        |
+| high_watermark         | The current high water mark.                                                                                                                                                             |
+| last_stable_offset     | The last stable offset (or LSO) of the partition. This is the last offset such that the state of all transactional records prior to this offset have been decided (ABORTED or COMMITTED) |
+| log_start_offset       | The current log start offset.                                                                                                                                                            |
+| aborted_transactions   | The aborted transactions.                                                                                                                                                                |
+| producer_id            | The producer id associated with the aborted transaction.                                                                                                                                 |
+| first_offset           | The first offset in the aborted transaction.                                                                                                                                             |
+| _tagged_fields         | The tagged fields                                                                                                                                                                        |
+| preferred_read_replica | The preferred read replica for the consumer to use on its next fetch request//下一次拉取节点                                                                                                    |
+| records                | The record data.                                                                                                                                                                         |
+| _tagged_fields         | The tagged fields                                                                                                                                                                        |
+| _tagged_fields         | The tagged fields                                                                                                                                                                        |
+| _tagged_fields         | The tagged fields                                                                                                                                                                        |
+
+##### 相关错误码
+
+```
+Errors.NOT_LEADER_OR_FOLLOWER 
+Errors.REPLICA_NOT_AVAILABLE
+Errors.KAFKA_STORAGE_ERROR 
+Errors.FENCED_LEADER_EPOCH
+Errors.OFFSET_NOT_AVAILABLE
+Errors.UNKNOWN_TOPIC_OR_PARTITION
+Errors.UNKNOWN_TOPIC_ID
+Errors.INCONSISTENT_TOPIC_ID
+Errors.OFFSET_OUT_OF_RANGE
+Errors.TOPIC_AUTHORIZATION_FAILED
+Errors.UNKNOWN_LEADER_EPOCH
+Errors.UNKNOWN_SERVER_ERROR
+Errors.CORRUPT_MESSAGE
+```
+
+# kafka事务概述
+
+## kafka 事务提供了 3 个功能
+
+- 多分区原子写入，对单次事务多个消息，要吗全部提交成功，要吗全部提交失败
+- 粉碎“僵尸实例”，保证对单个事务 id,只有一个 producor 可以进行事务性写入
+- 读事务消息，对消费者，提供读提交和读未提交的能力
+
+## 事务处理 api 和相关参数
+
+ producer 提供了五个事务方法：
+
+1. initTransactions
+2. beginTransaction
+3. sendOffsets
+4. commitTransaction
+5. abortTransaction
+
+生产者配置
+
+1. enable.idempotence：开启幂等
+   所谓幂等 producer 指 producer.send 的逻辑是幂等的，即发送相同的 Kafka 消息，broker 端不会重复写入消息。同一条消息 Kafka 保证底层日志中只会持久化一次，既不会丢失也不会重复。幂等性可以极大地减轻下游 consumer 系统实现消息去重的工作负担，因此是非常实用的功能。值得注意的是，幂等 producer 提供的语义保证是有条件的：
+   
+   - 单分区幂等性：幂等 producer 无法实现多分区上的幂等性。如前所述，若要实现多分区上的原子性，需要引入事务
+   
+   - 单会话幂等性：幂等 producer 无法跨会话实现幂等性。即使同一个 producer 宕机并重启也无法保证消息的 EOS 语义
+   
+   虽然有上面两个限制，幂等 producer 依然是一个非常实用的新功能。下面我们来讨论下它的设计原理。如果要实现幂等性， 通常都需要花费额外的空间来保存状态以执行消息去重。Kafka 的幂等 producer 整体上也是这样的思想。
+   
+   首先，producer 对象引入了一个新的字段：Producer ID(下称 PID)，它唯一标识一个 producer，当 producer 启动时 Kafka 会为每个 producer 分配一个 PID（64 位整数），因此 PID 的生成和分配对用户来说是完全透明的，用户无需考虑 PID 的事情，甚至都感受不到 PID 的存在。其次，0.11 Kafka 重构了消息格式，引入了序列号字段(sequence number，下称 seq number)来标识某个 PID producer 发送的消息。和 consumer 端的 offset 类似，seq number 从 0 开始计数并严格单调增加。同时在 broker 端会为每个 PID(即每个 producer)保存该 producer 发送过来的消息 batch 的某些元信息，比如 PID 信息、消息 batch 的起始 seq number 及结束 seq number 等。这样每当该 PID 发送新的消息 batch 时，Kafka broker 就会对比这些信息，如果发生冲突(比如起始 seq number 和结束 seq number 与当前缓存的相同)，那么 broker 就会拒绝这次写入请求。倘若没有冲突，那么 broker 端就会更新这部分缓存然后再开始写入消息。这就是 Kafka 实现幂等 producer 的设计思路：
+   
+   1. 为每个 producer 设置唯一的 PID；
+   
+   2. 引入 seq number 以及 broker 端 seq number 缓存更新机制来去重。
+
+2. transaction.timeout.ms：事务超时时间
+   事务协调器在主动中止正在进行的事务之前等待生产者更新事务状态的最长时间。
+   这个配置值将与 InitPidRequest 一起发送到事务协调器。如果该值大于 max.transaction.timeout。在 broke 中设置 ms 时，请求将失败，并出现 InvalidTransactionTimeout 错误。默认是 60000。这使得交易不会阻塞下游消费超过一分钟，这在实时应用程序中通常是允许的。
+
+3. transactional.id
+   用于事务性交付的 TransactionalId。这支持跨多个生产者会话的可靠性语义，因为它允许客户端确保使用相同 TransactionalId 的事务在启动任何新事务之前已经完成。如果没有提供 TransactionalId，则生产者仅限于幂等交付。
+
+消费者配置
+
+1. isolation.level
+   
+   - read_uncommitted:以偏移顺序使用已提交和未提交的消息。- 
+   
+   - read_committed:仅以偏移量顺序使用非事务性消息或已提交事务性消息。为了维护偏移排序，这个设置意味着我们必须在使用者中缓冲消息，直到看到给定事务中的所有消息。
+
+# 事务相关协议
+
+todo
+
+# kafka服务端io模型概述
+
+![](img/8a3bfdd174e9a8169766acba826cea8a8ec712f2.png)
+
+- Acceptor
+  监听并接受新链接，然后将新的连接交给Processor处理
+
+- Processor
+  每个processor绑定一个kafka Selector,processor借助Selector获取请求和发送消息，Processor会将请求进行反序列化后放入全局亲求队列
+
+- 
+  
+
+# kafka Selector 概述
+
+# 代理服务解决方案和存在的问题
+
+# todolist
