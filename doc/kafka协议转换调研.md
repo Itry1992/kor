@@ -1,3 +1,11 @@
+# 调研目标
+
+本次调研是为了实现在**对kafka 客户端尽可能少的代码改变**的情况下，使用htp系统实现kafka发布订阅相关功能。
+
+- 理想情况下，应该不需要对客户端原有代码进行任何改变，只需要变动broker地址。
+
+在htp架构和协议与kafka架构和协议存在巨大差异的情况下，为了实现该目标，我们需要一个**代理服务器**，对kafka客户端发送的请求进行解析，然后将消息存入htp系统中或从htp系统中获取信息，然后以对应的kafka协议对kafka客户端进行响应。
+
 # kafka架构概述
 
 在消息拉取和发送的过程中，可以分为 produce,customer,broker 三个角色。
@@ -71,7 +79,89 @@ consumer group是kafka提供的可扩展且具有容错性的消费者机制。�
 
 5. 数据压缩
 
-# kakfa协议概述
+# kakfa发布订阅模式Api
+
+## 生产者
+
+- initTransactions
+  初始化事务
+- beginTransaction
+  开始一个事务
+- sendOffsetsToTransaction
+- commitTransaction
+- abortTransaction
+- send
+  生产者发送消息
+- partitionsFor
+  获取一个主题的所有分区信息
+
+## 消费者
+
+- subscribe
+  订阅主题，提供主题订阅模式和正则订阅模式
+
+- unsubscribe
+  取消订阅
+
+- assignment
+  获取分区分配结果
+
+- assign
+  强制指定分区分配，与subscirbe方法不同，assign方法由用户直接手动consumer实例消费哪些具体分区，根据api上述描述，assign的consumer不会拥有kafka的group management机制，也就是当group内消费者数量变化的时候不会有reblance行为发生。
+
+- poll 
+  拉取消息，kafka 消费者的核心逻辑，消费者仅有一个独立的心跳维护线程。需要用户循环或定时调用poll。
+  在每个轮询中，消费者将尝试使用最后消耗的偏移量作为起始偏移量并按顺序提取。最后 消费偏移量可以通过seek(TopicPartition，long) 手动设置，也可以自动设置为上次提交 分区订阅列表的偏移量
+
+- commitSync
+  
+  同步提交offset
+
+- commitAsync 
+  异步提交offset
+
+- seek/seekToBeginning/seekToEnd
+  覆盖消费者将在下一次poll(timeout) 中使用的fetch偏移量。如果此API 为同一分区调用多次，则将在下一个poll() 上使用最新的偏移量。 如果在消费过程中任意使用此API来重置获取偏移量，则可能会丢失数据
+
+- position
+  获取将要获取的下一条记录的偏移量 (如果存在具有该偏移量的记录)。 如果没有当前位置，此方法可能会向服务器发出远程调用 。
+
+- committed
+  
+  获取给定分区的最后提交偏移量 (无论是其他消费组提交的还是当前消费者提交的)。
+
+- partitionsFor
+  获取关于给定主题的分区的元数据。
+
+- listTopics
+  
+  获取有关用户有权查看的所有主题的分区的元数据
+
+- pause
+  
+  暂停从请求的分区中获取。以后调用poll(Duration) 不会返回 这些分区中的任何记录，直到使用resume(Collection) 恢复为止。 请注意，此方法不影响分区订阅。它不会导致消费组使用自动分配时的再平衡。 注意: Rebalance不会保留暂停/恢复状态。
+
+- resume
+  
+  使用暂停 (收集) 恢复已暂停的分区。
+
+- paused
+  
+  获取之前被调用pause(Collection) 暂停的分区集
+
+- offsetsForTimes\beginningOffsets\endOffsets
+  
+  某个时刻的offset查询
+
+- groupMetadata
+  
+  消费组相关元数据（id,memberid,generationId,groupInstanceId）
+
+- enforceRebalance
+  
+  通过重新加入组来提醒消费者触发新的再平衡。这是一个非阻塞呼叫，它迫使 消费者在下一次调用poll(Duration) 时触发新的rebalance。如果您希望强制进行额外的重新平衡，则必须完成当前 一个通过在重试此API之前调用轮询。
+
+# kakfa协议&网络概述
 
 [Apache Kafka 协议参考](https://kafka.apache.org/protocol#protocol_preliminaries)
 
@@ -1143,13 +1233,136 @@ todo
   监听并接受新链接，然后将新的连接交给Processor处理
 
 - Processor
-  每个processor绑定一个kafka Selector,processor借助Selector获取请求和发送消息，Processor会将请求进行反序列化后放入全局亲求队列
+  每个processor绑定一个kafka Selector,processor借助Selector获取请求和发送消息，Processor还会维护一个响应队列。在Selector 每一个poll周期内，会发送响应队列中的响应并且读取新的请求，Processor会将请求进行反序列化组装后放入RequestChannel 持有的全局请求队列中。
 
-- 
-  
+- RequestHandler
+  requestHandler 负责调用kafkaApis进行具体的处理，处理结果将会放入Processor的响应队列中。
 
 # kafka Selector 概述
 
-# 代理服务解决方案和存在的问题
+todo
 
-# todolist
+# demo代理服务解决方案和无法确定的问题
+
+## 项目结构
+
+代理服务直接kafka服务端的io模型，这么做的好处是不用关心kafka和各个版本的兼容性处理、序列化和反序列化处理。我们只需要重写KakfakApis部分，根据不同的协议功能向htp系统写入或者拉取数据。
+
+demo项目使用gradle作为构建工具，划分了三个模块
+
+- base
+  Java代码模块，对应kafka3.3 源码中的clients模块，包含序列化/反序列化等客户端可服务端公用的类
+
+- sever_common
+  
+  Java代码模块，对应kafka3.3源码中的sever_common模块，包含服务端需要使用的工具类等。
+
+- sever
+  
+  scala代码，对应kafka3.3源码中的core模块，服务端核心代码，需要实现的代码均位于该模块。
+
+sever模块的代码主要包含2个部分：
+
+- 从kafka3.3中分离出的io模块
+  
+  - 协议序列化和反序列化再这部分完成，详见Processor
+
+- AdapterRequestHandler，这部分是对KakfakApis的重写，负责具体的协议处理，demo目前只支持htp系统单机，代理服务器单机的情况。
+
+## 无法确定的问题
+
+##### partition支持（优先级：高）
+
+- 问题描述
+
+kafka允许自定义分区分配策略（发送消息时和重平衡时），在kafka中分区数量是固定的，在topic创建之后就无法发生变更。
+
+kafka通过重平衡流程来确定每一个partition最多只能有一个消费，以此来保证消费者的消费消息的顺序性，并且kafka由客户端来指定下一次来去的offset。分区数量会极大的限制kafka消费者的并发度，同时也会影响用户设置的分区策略。
+
+用户通过分区策略可以将消息发送到指定分区，也可以通过消费者手动指定消费分区策略。
+
+- <span id="jp_1">方案提议1</span>
+  
+  1. 使用htp 的domain作为kakfak的topic,然后以htp的topic作为kafka的partition 
+  
+  2. 代理服务增加对应的配置项，来确定分区数量。
+     
+     - 或者由htp mgr节点来保存配置项？这样代理服务不用储存任何数据
+  
+  3. 可以通过查询htp domain下的topic数量来确定分区数量
+
+- 方案提议2 <span id="partition_2"></span>
+  
+  1. 使用htp多级主题来实现partition划分
+  2. 代理服务增加配置项来确定默认主题数量
+     - 或者由htp mgr节点来保存配置项？这样代理服务不用储存任何数据
+
+- <span id="jp_3">方案提议3</span>
+  
+  虚拟化partition,客户可以通过mgr接口来随意修改partition数量，htp使用和broker相同的topic来存储消息
+
+这些方案会影响后续的消息顺序支持
+
+##### offset支持（优先级：高）
+
+- 问题描述
+  消费者初始化后根据commited_offset来确定消费的起始位置,或者可以使用seek系列函数来指定位置开始消费。
+  消费者每次poll时，由消费组客户端指定offset。htp系统中，没用根据指定offset拉取的同时，提交committed_offset的功能，（offset>=0的模式不支持进行commit,-1等模式不支持自定义offset拉取）。
+
+- 提议方案
+  
+  希望htp broker提供对应功能的支持，或者代理服务器自己管理commited_offset,或者htp mgr来储存commited_offset。
+
+##### 消费顺序性支持&重平衡流程（优先级：高）
+
+- 问题描述
+  
+  kafka消息发送到partition时，按顺序抵达。且kakfa重平衡后，每个partition最多有一个同消费组的消费者进行消费（多余的消费者会被闲置），这样可以保证消息消费的顺序性。且可以尽可能保证消息仅被消费一次（在不发生从重平衡/不执行seek系列API时，消息仅会被消费一次）。
+  
+  kafka通过重平衡流程来保证每个partition最多有一个同消费组的消费者进行消费，需要对重平衡过程中的`find_coordinator，join_group,sync_group`协议进行支持。demo目前是单机部署，所以问题不大，集群模式下需要考虑coordinator的分配
+  
+  htp broker和topic的绑定仅支持在 htp mgr 上配置。若不进行绑定，htp客户端的消息会被轮询的发送到broker上，此时进行消息拉取时，消息会被乱序的拉取。
+  
+  kakfa由客户端进行offset管理，若不实现每个partition最多有一个同消费组的消费者进行消费，会有很多的消息被重复消费
+
+- 方案提议
+  
+  partition支持使用[提议1](#jp_1)或[提议2](#partition_2) 此时需要实现htp topic和broker绑定来辅助实现消息的顺序性。
+  
+  partition支持使用[提议3](#jp_3),此时在拉取消息需要以分段锁的模式拉取，即由代理服务器通过分段锁来保证不被重复消费。此方案下实现成本比较高，而且若想重复消费是每次每个kafka 消费者拉取到的消息都不同。
+  
+  另外要走kafka的重新平衡流程时，需要确定coordinator由哪个代理服务器承担，coordinator需要负责处理`find_coordinator,join_group,sync_group,commit_offset,list_offset`协议。
+
+##### topicId支持
+
+- 问题描述
+  kafka topic有个16位的uuid作为topicId,需要根据topicId查询topic。htp系统中topic没有该属性。
+
+- 方案提议
+  
+  - 由代理服务器来储存topicid,此时代理服务器集群部署时，需要保存数据同步
+  - 由htp mgr或者 htp brk 提供支持。
+
+##### 代理服务器集群化后需要同步的数据
+
+- 问题描述
+  
+  若代理服务器集群化后，部分数据需要做到每个broker之间同步，且需要感知broker之间的存活状态。kakfa客户端可以从任意节点获取全部的代理服务器和topic信息。
+
+- 方案提议
+  
+  - 代理服务使用raft开源库实现
+  
+  - mgr提供相应支持。
+
+# 后续调研方向&待实现的功能
+
+- 代理节点集群化
+
+- 代理节点相关配置完善
+
+- Kafka SASL授权
+
+- kakfa幂等功能支持
+
+- kafka事务处理原理和相应协议
