@@ -1291,7 +1291,7 @@ kafka通过重平衡流程来确定每一个partition最多只能有一个消费
   
   3. 可以通过查询htp domain下的topic数量来确定分区数量
 
-- 方案提议2 <span id="partition_2"></span>
+- 方案提议2 <span id="jp_2"></span>
   
   1. 使用htp多级主题来实现partition划分
   2. 代理服务增加配置项来确定默认主题数量
@@ -1327,7 +1327,7 @@ kafka通过重平衡流程来确定每一个partition最多只能有一个消费
 
 - 方案提议
   
-  partition支持使用[提议1](#jp_1)或[提议2](#partition_2) 此时需要实现htp topic和broker绑定来辅助实现消息的顺序性。
+  partition支持使用[提议1](#jp_1)或[提议2](#jp_2) 此时需要实现htp topic和broker绑定来辅助实现消息的顺序性。
   
   partition支持使用[提议3](#jp_3),此时在拉取消息需要以分段锁的模式拉取，即由代理服务器通过分段锁来保证不被重复消费。此方案下实现成本比较高，而且若想重复消费是每次每个kafka 消费者拉取到的消息都不同。
   
@@ -1354,6 +1354,14 @@ kafka通过重平衡流程来确定每一个partition最多只能有一个消费
   - 代理服务使用raft开源库实现
   
   - mgr提供相应支持。
+
+##### 消息幂等性支持
+- 问题描述
+
+  kafka通过produceId和mesaage seq来实现消息的幂等性
+
+- 方案提议
+  
 
 # 后续调研方向&待实现的功能
 
