@@ -29,6 +29,14 @@ public class RecordHeader implements Header {
     private ByteBuffer valueBuffer;
     private byte[] value;
 
+    public ByteBuffer getKeyBuffer() {
+        return keyBuffer;
+    }
+
+    public ByteBuffer getValueBuffer() {
+        return valueBuffer;
+    }
+
     public RecordHeader(String key, byte[] value) {
         Objects.requireNonNull(key, "Null header keys are not permitted");
         this.key = key;

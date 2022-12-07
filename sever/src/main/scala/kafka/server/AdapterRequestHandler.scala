@@ -1,6 +1,7 @@
 package kafka.server
 
 import com.tong.kafka.common.errors.{ApiException, InvalidRequestException, UnsupportedCompressionTypeException}
+import com.tong.kafka.common.header.internals.RecordHeader
 import com.tong.kafka.common.internals.FatalExitError
 import com.tong.kafka.common.message.JoinGroupResponseData.JoinGroupResponseMember
 import com.tong.kafka.common.message.ListOffsetsResponseData.ListOffsetsTopicResponse
@@ -14,17 +15,24 @@ import com.tong.kafka.common.replica.ClientMetadata.DefaultClientMetadata
 import com.tong.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import com.tong.kafka.common.requests.ProduceResponse.PartitionResponse
 import com.tong.kafka.common.requests._
-import com.tong.kafka.common.utils.Time
+import com.tong.kafka.common.utils.{ByteUtils, Time}
 import com.tong.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import com.tong.kafka.server.common.MetadataVersion
+import com.tong.kafka.tlq.TlqHolder
+import com.tongtech.client.consumer.{PullCallback, PullResult, PullStatus}
+import com.tongtech.client.consumer.common.PullType
+import com.tongtech.client.message.{MessageExt, Message => TlqMessage}
+import com.tongtech.client.producer.{SendCallback, SendResult}
 import kafka.network.RequestChannel
 import kafka.utils.Implicits.MapExtensionMethods
 import kafka.utils.Logging
 
-import java.util.concurrent.ConcurrentHashMap
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.{ConcurrentHashMap, CountDownLatch}
 import java.util.{Collections, Optional}
 import java.{lang, util}
+import scala.collection.mutable.ArrayBuffer
 import scala.collection.{immutable, mutable}
 import scala.jdk.CollectionConverters._
 import scala.jdk.StreamConverters._
@@ -41,6 +49,8 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
   //对应kafka配置项：message.format.version，3.0默认值：IBP_3_0_IV1
   //用于老版本消息格式兼容
   val messageFormatVersion = MetadataVersion.fromVersionString(MetadataVersion.IBP_3_0_IV1.version)
+  val tlqProduce = TlqHolder.getProducer;
+  val tlqCustomer = TlqHolder.getCustomer
 
   override def handle(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     trace(s"Handling request:${request.requestDesc(true)} from connection ${request.context.connectionId};" +
@@ -160,7 +170,10 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     else {
       // request
       val responseStatus = mutable.Map[TopicPartition, PartitionResponse]()
+      val partitionSize = authorizedRequestInfo.keySet.size
+      val countDownLatch = new CountDownLatch(partitionSize)
       authorizedRequestInfo.foreach {
+        //memeryRecords 包含 List<BatchRecord>
         case (topicPartition, records: MemoryRecords) => {
           val batchesIterator: util.Iterator[MutableRecordBatch] = records.batches().iterator()
           while (batchesIterator.hasNext) {
@@ -170,21 +183,107 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
             if (count == 0) {
               count = (batch.lastOffset() - batch.baseOffset() + 1).toInt
             }
+            val endCount = new AtomicInteger(0)
             val baseOffset = TopicMap.getOffset(topicPartition)
             TopicMap.addOffset(topicPartition, Some(count))
             trace(s"baseOffset ${batch.baseOffset()},lastOffset ${batch.lastOffset()} count ${batch.countOrNull()}")
-
             //，仅保留最后一个批次的最后一条消息
-            if (!batchesIterator.hasNext) {
-              val recordIterator = batch.iterator()
-              while (recordIterator.hasNext) {
-                val record: Record = recordIterator.next()
-                if (!recordIterator.hasNext) {
-                  trace(s"last recode $record sequence ${record.sequence()} from topic $topicPartition")
-                  TopicMap.getOrSetLastRecord(topicPartition, Some(record))
-                }
+            val recordIterator = batch.iterator()
+            var offset_index = 0;
+            while (recordIterator.hasNext) {
+              val record: Record = recordIterator.next()
+              val message = new TlqMessage()
+              message.setTopicOrQueue(TlqHolder.topic)
+              var dataLength = 1 //magic 1byte first
+              dataLength += ByteUtils.sizeOfVarint(record.keySize())
+              dataLength += ByteUtils.sizeOfVarint(record.valueSize())
+              dataLength += record.keySize() + record.valueSize()
+              dataLength += ByteUtils.sizeOfVarint(record.headers().length)
+              record.headers().foreach(h => {
+                val header = h.asInstanceOf[RecordHeader]
+                dataLength += ByteUtils.sizeOfVarint(header.getKeyBuffer.remaining())
+                dataLength += ByteUtils.sizeOfVarint(Option(header.getValueBuffer).map(r => r.remaining()).getOrElse(0))
+                dataLength += header.getKeyBuffer.remaining() + Option(header.getValueBuffer).map(r => r.remaining()).getOrElse(0)
+              })
+              dataLength += ByteUtils.sizeOfVarint(offset_index)
+              dataLength += ByteUtils.sizeOfVarlong(record.timestamp())
+              if (batch.magic > RecordBatch.MAGIC_VALUE_V1) {
+                val batch1 = batch.asInstanceOf[DefaultRecordBatch]
+                dataLength += ByteUtils.sizeOfVarlong(batch1.baseTimestamp())
               }
+
+              //magic
+              //key_length ->
+              //key
+              //value_length ->
+              //value
+              //header count ->
+              //header key size
+              //header key
+              //header value size
+              //header value
+              //offset_index
+              //timestamp
+              //base_timestamp
+
+
+              val bytes = new Array[Byte](dataLength)
+              val buffer = ByteBuffer.wrap(bytes)
+              buffer.put(batch.magic())
+              ByteUtils.writeVarint(record.keySize(), buffer)
+              buffer.put(record.key())
+              ByteUtils.writeVarint(record.valueSize(), buffer)
+              buffer.put(record.value())
+              ByteUtils.writeVarint(record.headers().length, buffer)
+              record.headers().foreach(h => {
+                val header = h.asInstanceOf[RecordHeader]
+                ByteUtils.writeVarint(header.getKeyBuffer.remaining(), buffer)
+                buffer.put(header.getKeyBuffer.slice())
+                val headerValue = header.getValueBuffer
+                if (headerValue != null) {
+                  ByteUtils.writeVarint(headerValue.remaining(), buffer)
+                  buffer.put(header.getValueBuffer.slice())
+                } else {
+                  ByteUtils.writeVarint(0, buffer)
+                }
+              })
+              ByteUtils.writeVarint(offset_index, buffer)
+              ByteUtils.writeVarlong(record.timestamp(), buffer)
+              if (batch.magic() > RecordBatch.MAGIC_VALUE_V1) {
+                val batch1 = batch.asInstanceOf[DefaultRecordBatch]
+                ByteUtils.writeVarlong(batch1.baseTimestamp(), buffer)
+              }
+              if (buffer.remaining() != 0) {
+                throw new RuntimeException("some error ")
+              }
+              message.setBody(bytes)
+              offset_index += 1
+              tlqProduce.send(message, new SendCallback {
+                override def onSuccess(sendResult: SendResult): Unit = {
+                  val i = endCount.incrementAndGet()
+                  if (i == count)
+                    countDownLatch.countDown();
+                }
+
+                override def onException(throwable: Throwable): Unit = {
+                  val i = endCount.getAndIncrement()
+                  if (i == count)
+                    countDownLatch.countDown();
+                }
+              })
             }
+            responseStatus += (topicPartition ->
+              new PartitionResponse(
+                Errors.NONE,
+                baseOffset,
+                time.milliseconds(),
+                baseOffset,
+              )
+              )
+            //          if (magic > RecordBatch.MAGIC_VALUE_V1)
+            //            return new DefaultRecordBatch(batchSlice);
+            //          else
+            //            return new AbstractLegacyRecordBatch.ByteBufferLegacyRecordBatch(batchSlice);
 
             //构建PartitionResponse
             //      error_code => INT16
@@ -209,6 +308,9 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
               )
           }
         }
+      }
+      if (produceRequest.acks() != 0) {
+        countDownLatch.await();
       }
       sendResponseCallback(responseStatus.toMap)
     }
@@ -756,7 +858,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
 
 
       // Send the response immediately.
-      requestChannel.sendResponse(request, createResponse(0), None)
+      requestChannel.sendResponse(request, createResponse(5), None)
     }
 
 
@@ -788,39 +890,90 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         isolation = FetchIsolation(fetchRequest),
         clientMetadata = clientMetadata
       )
-      val result = interesting.map { case (topicIdPartition, partitionData) =>
-        val topicPartition = new TopicPartition(topicIdPartition.topic(), topicIdPartition.partition())
-        val record = TopicMap.getOrSetLastRecord(topicPartition, None)
-        // 每个topic 塞一条缓存的消息
-        //(TopicIdPartition, FetchPartitionData)
-        val lastOffset = TopicMap.getOffset(topicPartition)
-        val fetchPartitionData = FetchPartitionData(
-          error = Errors.NONE,
-          //最高以提交的记录
-          highWatermark = lastOffset,
-          logStartOffset = 0,
-          records = if (partitionData.fetchOffset > lastOffset) {
-            MemoryRecords.EMPTY
-          } else {
-            record.map((r: Record) => {
-              MemoryRecords.withRecords(
-                RecordBatch.CURRENT_MAGIC_VALUE,
-                partitionData.fetchOffset,
-                CompressionType.NONE,
-                new SimpleRecord(r.timestamp(), r.key(), r.value(), r.headers())
-              )
-            }).getOrElse(MemoryRecords.EMPTY)
-          },
-          divergingEpoch = Some(new FetchResponseData.EpochEndOffset().setEpoch(0).setEndOffset(lastOffset)),
-          lastStableOffset = Some(lastOffset),
-          abortedTransactions = None,
-          //下一次拉取的目的地
-          preferredReadReplica = Some(TopicMap.node.id()),
-          //对客户端没有意义
-          isReassignmentFetch = false
-        )
-        topicIdPartition -> fetchPartitionData
+
+      def buildRecordsByTlqMessage(message: mutable.Buffer[MessageExt], baseOffset: Long): MemoryRecords = {
+        def readVarintVaule(byteBuffer: ByteBuffer) = {
+          val length = ByteUtils.readVarint(byteBuffer)
+          val value = byteBuffer.slice()
+          value.limit(length)
+          byteBuffer.position(byteBuffer.position() + length)
+          (length, value)
+        }
+
+        val records: mutable.Buffer[SimpleRecord] = message.map((message) => {
+          val body = message.getBody
+          val buffer = ByteBuffer.wrap(body)
+          val magic = buffer.get()
+          val (keySize, key) = readVarintVaule(buffer)
+          val (valueSize, value) = readVarintVaule(buffer)
+          val headerCount = ByteUtils.readVarint(buffer)
+          val headers = new ArrayBuffer[RecordHeader]()
+          for (i <- 0 until  headerCount) {
+            val (_, hKey: ByteBuffer) = readVarintVaule(buffer)
+            val (_, hValue: ByteBuffer) = readVarintVaule(buffer)
+            headers += new RecordHeader(hKey, hValue)
+          }
+          val offsetIndex = ByteUtils.readVarint(buffer)
+          val timestamp = ByteUtils.readVarlong(buffer)
+          new SimpleRecord(timestamp, key, value, headers.toArray)
+        })
+
+        MemoryRecords.withRecords(RecordBatch.CURRENT_MAGIC_VALUE, baseOffset, CompressionType.NONE, records.toList: _*)
       }
+
+      val countDownLatch = new CountDownLatch(interesting.size)
+      val result = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]
+      interesting.foreach { case (topicIdPartition, partitionData) =>
+        tlqCustomer.pullMessage(PullType.PullContinue, -1, 4, new PullCallback {
+          override def onSuccess(pullResult: PullResult): Unit = {
+            if (pullResult.getPullStatus==PullStatus.FOUND){
+              info("success pull from tlq")
+            }
+            val fetchPartitionData = FetchPartitionData(
+              error = Errors.NONE,
+              //最高以提交的记录
+              highWatermark = 999999,
+              logStartOffset = 0,
+              records = if (pullResult.getMsgFoundList.isEmpty) {
+                MemoryRecords.EMPTY
+              } else {
+                buildRecordsByTlqMessage(pullResult.getMsgFoundList.asScala, partitionData.fetchOffset)
+              },
+              divergingEpoch = Some(new FetchResponseData.EpochEndOffset().setEpoch(0).setEndOffset(99999)),
+              lastStableOffset = None,
+              abortedTransactions = None,
+              //下一次拉取的目的地
+              preferredReadReplica = Some(TopicMap.node.id()),
+              //对客户端没有意义
+              isReassignmentFetch = false
+            )
+            result += (topicIdPartition -> fetchPartitionData)
+            countDownLatch.countDown()
+          }
+
+          override def onException(throwable: Throwable): Unit = {
+            val fetchPartitionData = FetchPartitionData(
+              error = Errors.NONE,
+              //最高以提交的记录
+              highWatermark = partitionData.fetchOffset,
+              logStartOffset = 0,
+              records = MemoryRecords.EMPTY,
+              divergingEpoch = Some(new FetchResponseData.EpochEndOffset().setEpoch(0).setEndOffset(99999)),
+              lastStableOffset = Option(partitionData.fetchOffset),
+              abortedTransactions = None,
+              //下一次拉取的目的地
+              preferredReadReplica = Some(TopicMap.node.id()),
+              //对客户端没有意义
+              isReassignmentFetch = false
+            )
+            countDownLatch.countDown()
+            result += (topicIdPartition -> fetchPartitionData)
+          }
+        })
+
+
+      }
+      countDownLatch.await()
       processResponseCallback(result.toList)
 
     }
@@ -923,6 +1076,8 @@ object TopicMap {
     groupInstanceIdMap.putIfAbsent(groupName, Uuid.randomUuid().toString)
     groupInstanceIdMap.getOrElse(groupName, "")
   }
+
+
 }
 
 

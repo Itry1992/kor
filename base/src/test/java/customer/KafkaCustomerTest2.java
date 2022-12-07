@@ -6,6 +6,7 @@ import com.tong.kafka.common.TopicPartition;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Properties;
 
 public class KafkaCustomerTest2 {
@@ -19,7 +20,7 @@ public class KafkaCustomerTest2 {
     static private KafkaConsumer initCustomer() {
         Properties props = new Properties();
         props.put("bootstrap.servers", "localhost:9092");
-//        props.put("group.id", "tt_ttx");
+        props.put("group.id", "tt_ttx");
         props.put("enable.auto.commit", false);
 //        props.put("auto.commit.interval.ms", "10000");
         props.put("key.deserializer", "com.tong.kafka.common.serialization.StringDeserializer");
@@ -42,10 +43,21 @@ public class KafkaCustomerTest2 {
             }
         });
         try {
+            int i = 0;
             while (true) {
+                i++;
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(1));
                 for (ConsumerRecord<String, String> record : records) {
                     System.out.printf("offset = %d, key = %s, value = %s%n", record.offset(), record.key(), record.value());
+                }
+                if (!records.isEmpty()) {
+                    if (i > 2 && i % 2 == 0) {
+                        TopicPartition topic_test_0 = new TopicPartition("TOPIC_TEST", 0);
+                        consumer.commitSync(Collections.singletonMap(topic_test_0, new OffsetAndMetadata(records.records(topic_test_0).get(0).offset() - 2)));
+                    } else {
+                        consumer.commitSync();
+                    }
+
                 }
 //                consumer.partitionsFor(topic).forEach((tp) -> System.out.printf("%s - committed %s", tp, consumer.committed(new TopicPartition(tp.topic(), tp.partition()))));
 //                if (!records.isEmpty()) {

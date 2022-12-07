@@ -54,9 +54,9 @@ public class KafkaProducerTest implements Runnable {
 //                    countDownLatch.countDown();
                 });
 
-//                result.get();
-                if (i % 5 == 0)
-                    Thread.sleep(10000);
+                result.get();
+//                if (i % 5 == 0)
+//                    Thread.sleep(100);
             }
 //            countDownLatch.await();
             System.out.println("end::" + (System.currentTimeMillis() - l));

@@ -36,29 +36,29 @@ import static com.tong.kafka.common.record.RecordBatch.MAGIC_VALUE_V2;
 
 /**
  * This class implements the inner record format for magic 2 and above. The schema is as follows:
- *
- *
+ * <p>
+ * <p>
  * Record =>
- *   Length => Varint
- *   Attributes => Int8
- *   TimestampDelta => Varlong
- *   OffsetDelta => Varint
- *   Key => Bytes
- *   Value => Bytes
- *   Headers => [HeaderKey HeaderValue]
- *     HeaderKey => String
- *     HeaderValue => Bytes
- *
+ * Length => Varint
+ * Attributes => Int8
+ * TimestampDelta => Varlong
+ * OffsetDelta => Varint
+ * Key => Bytes
+ * Value => Bytes
+ * Headers => [HeaderKey HeaderValue]
+ * HeaderKey => String
+ * HeaderValue => Bytes
+ * <p>
  * Note that in this schema, the Bytes and String types use a variable length integer to represent
  * the length of the field. The array type used for the headers also uses a Varint for the number of
  * headers.
- *
+ * <p>
  * The current record attributes are depicted below:
- *
- *  ----------------
- *  | Unused (0-7) |
- *  ----------------
- *
+ * <p>
+ * ----------------
+ * | Unused (0-7) |
+ * ----------------
+ * <p>
  * The offset and timestamp deltas compute the difference relative to the base offset and
  * base timestamp of the batch that this record is contained in.
  */
@@ -121,7 +121,8 @@ public class DefaultRecord implements Record {
     }
 
     @Override
-    public void ensureValid() {}
+    public void ensureValid() {
+    }
 
     @Override
     public int keySize() {
@@ -218,6 +219,26 @@ public class DefaultRecord implements Record {
         return ByteUtils.sizeOfVarint(sizeInBytes) + sizeInBytes;
     }
 
+
+    public static int writeTo(DataOutputStream out,
+                              int offsetDelta,
+                              long timestampDelta,
+                              byte[] allData) throws IOException {
+        int sizeInBytes = sizeOfBodyInBytes(offsetDelta, timestampDelta, allData);
+        ByteUtils.writeVarint(sizeInBytes, out);
+
+        byte attributes = 0; // there are no used record attributes at the moment
+        out.write(attributes);
+
+        ByteUtils.writeVarlong(timestampDelta, out);
+        ByteUtils.writeVarint(offsetDelta, out);
+
+        out.write(allData);
+
+
+        return ByteUtils.sizeOfVarint(sizeInBytes) + sizeInBytes;
+    }
+
     @Override
     public boolean hasMagic(byte magic) {
         return magic >= MAGIC_VALUE_V2;
@@ -294,8 +315,8 @@ public class DefaultRecord implements Record {
         int sizeOfBodyInBytes = ByteUtils.readVarint(buffer);
         if (buffer.remaining() < sizeOfBodyInBytes)
             throw new InvalidRecordException("Invalid record size: expected " + sizeOfBodyInBytes +
-                " bytes in record payload, but instead the buffer has only " + buffer.remaining() +
-                " remaining bytes.");
+                    " bytes in record payload, but instead the buffer has only " + buffer.remaining() +
+                    " remaining bytes.");
 
         int totalSizeInBytes = ByteUtils.sizeOfVarint(sizeOfBodyInBytes) + sizeOfBodyInBytes;
         return readFrom(buffer, totalSizeInBytes, sizeOfBodyInBytes, baseOffset, baseTimestamp,
@@ -372,7 +393,7 @@ public class DefaultRecord implements Record {
         int totalSizeInBytes = ByteUtils.sizeOfVarint(sizeOfBodyInBytes) + sizeOfBodyInBytes;
 
         return readPartiallyFrom(input, skipArray, totalSizeInBytes, sizeOfBodyInBytes, baseOffset, baseTimestamp,
-            baseSequence, logAppendTime);
+                baseSequence, logAppendTime);
     }
 
     private static PartialDefaultRecord readPartiallyFrom(DataInput input,
@@ -401,8 +422,8 @@ public class DefaultRecord implements Record {
             int offsetDelta = readVarInt(skipBuffer, input, bytesRemaining);
             long offset = baseOffset + offsetDelta;
             int sequence = baseSequence >= 0 ?
-                DefaultRecordBatch.incrementSequence(baseSequence, offsetDelta) :
-                RecordBatch.NO_SEQUENCE;
+                    DefaultRecordBatch.incrementSequence(baseSequence, offsetDelta) :
+                    RecordBatch.NO_SEQUENCE;
 
             // first skip key
             int keySize = skipLengthDelimitedField(skipBuffer, input, bytesRemaining);
@@ -425,7 +446,7 @@ public class DefaultRecord implements Record {
 
             if (bytesRemaining.value > 0 || skipBuffer.remaining() > 0)
                 throw new InvalidRecordException("Invalid record size: expected to read " + sizeOfBodyInBytes +
-                    " bytes in record payload, but there are still bytes remaining");
+                        " bytes in record payload, but there are still bytes remaining");
 
             return new PartialDefaultRecord(sizeInBytes, attributes, offset, timestamp, sequence, keySize, valueSize);
         } catch (BufferUnderflowException | IllegalArgumentException e) {
@@ -579,6 +600,16 @@ public class DefaultRecord implements Record {
         size += ByteUtils.sizeOfVarint(offsetDelta);
         size += ByteUtils.sizeOfVarlong(timestampDelta);
         size += sizeOf(keySize, valueSize, headers);
+        return size;
+    }
+
+    public static int sizeOfBodyInBytes(int offsetDelta,
+                                        long timestampDelta,
+                                        byte[] allData) {
+        int size = 1; // always one byte for attributes
+        size += ByteUtils.sizeOfVarint(offsetDelta);
+        size += ByteUtils.sizeOfVarlong(timestampDelta);
+        size += allData.length;
         return size;
     }
 

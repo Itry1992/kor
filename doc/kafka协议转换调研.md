@@ -1306,9 +1306,10 @@ kafka通过重平衡流程来确定每一个partition最多只能有一个消费
 ##### offset支持（优先级：高）
 
 - 问题描述
+  
+  tlq 发送消息时并没有返回offset
   消费者初始化后根据commited_offset来确定消费的起始位置,或者可以使用seek系列函数来指定位置开始消费。
   消费者每次poll时，由消费组客户端指定offset。htp系统中，没用根据指定offset拉取的同时，提交committed_offset的功能，（offset>=0的模式不支持进行commit,-1等模式不支持自定义offset拉取）。
-
 - 提议方案
   
   希望htp broker提供对应功能的支持，或者代理服务器自己管理commited_offset,或者htp mgr来储存commited_offset。
@@ -1356,12 +1357,12 @@ kafka通过重平衡流程来确定每一个partition最多只能有一个消费
   - mgr提供相应支持。
 
 ##### 消息幂等性支持
-- 问题描述
 
+- 问题描述
+  
   kafka通过produceId和mesaage seq来实现消息的幂等性
 
 - 方案提议
-  
 
 # 后续调研方向&待实现的功能
 
