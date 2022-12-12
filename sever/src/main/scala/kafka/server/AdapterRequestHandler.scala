@@ -48,9 +48,9 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       MIN_INCREMENTAL_FETCH_SESSION_EVICTION_MS))
   //对应kafka配置项：message.format.version，3.0默认值：IBP_3_0_IV1
   //用于老版本消息格式兼容
-  val messageFormatVersion = MetadataVersion.fromVersionString(MetadataVersion.IBP_3_0_IV1.version)
-  val tlqProduce = TlqHolder.getProducer;
-  val tlqCustomer = TlqHolder.getCustomer
+  val messageFormatVersion: MetadataVersion = MetadataVersion.fromVersionString(MetadataVersion.IBP_3_0_IV1.version)
+  private val tlqProduce = TlqHolder.getProducer;
+  private val tlqCustomer = TlqHolder.getCustomer
 
   override def handle(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     trace(s"Handling request:${request.requestDesc(true)} from connection ${request.context.connectionId};" +
@@ -173,7 +173,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       val partitionSize = authorizedRequestInfo.keySet.size
       val countDownLatch = new CountDownLatch(partitionSize)
       authorizedRequestInfo.foreach {
-        //memeryRecords 包含 List<BatchRecord>
+        //MemoryRecords 包含 List<BatchRecord>
         case (topicPartition, records: MemoryRecords) => {
           val batchesIterator: util.Iterator[MutableRecordBatch] = records.batches().iterator()
           while (batchesIterator.hasNext) {
@@ -187,7 +187,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
             val baseOffset = TopicMap.getOffset(topicPartition)
             TopicMap.addOffset(topicPartition, Some(count))
             trace(s"baseOffset ${batch.baseOffset()},lastOffset ${batch.lastOffset()} count ${batch.countOrNull()}")
-            //，仅保留最后一个批次的最后一条消息
+            //重新组装消息发送到tlq
             val recordIterator = batch.iterator()
             var offset_index = 0;
             while (recordIterator.hasNext) {
@@ -384,7 +384,6 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
 
   def handleMetadataRequest(request: RequestChannel.Request): Unit = {
     //需要返回topic 对应的 partition info 包括leader 和副本信息,broker信息
-
     val metadataRequest = request.body[MetadataRequest]
     val requestVersion = request.header.apiVersion
     val isAllTopic = metadataRequest.isAllTopics
@@ -485,7 +484,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     // and groupInstanceId is configured to unknown.
     val requireKnownMemberId = joinGroupRequest.version >= 4 && groupInstanceId.isEmpty
 
-    def getMemberId(): String = {
+    def getMemberId: String = {
       s"${request.header.clientId()}-${Uuid.randomUuid().toString}"
     }
 
@@ -517,10 +516,10 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     val responseBody: JoinGroupResponse = if (requireKnownMemberId && isMemberIdNull) {
       getJoinGroupResponseByError(Errors.MEMBER_ID_REQUIRED)
     } else {
-      val memberId =
-        if (isMemberIdNull) requestMemberId.getOrElse(getMemberId())
+      val memberId: String =
+        if (isMemberIdNull) requestMemberId.getOrElse(getMemberId)
         else
-          getMemberId()
+          getMemberId
       val protocols: util.List[JoinGroupRequestData.JoinGroupRequestProtocol] = joinGroupRequest.data().protocols().valuesList()
       val pickedProtocol = Option(protocols.get(0))
       new JoinGroupResponse(
@@ -908,7 +907,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
           val (valueSize, value) = readVarintVaule(buffer)
           val headerCount = ByteUtils.readVarint(buffer)
           val headers = new ArrayBuffer[RecordHeader]()
-          for (i <- 0 until  headerCount) {
+          for (i <- 0 until headerCount) {
             val (_, hKey: ByteBuffer) = readVarintVaule(buffer)
             val (_, hValue: ByteBuffer) = readVarintVaule(buffer)
             headers += new RecordHeader(hKey, hValue)
@@ -926,7 +925,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       interesting.foreach { case (topicIdPartition, partitionData) =>
         tlqCustomer.pullMessage(PullType.PullContinue, -1, 4, new PullCallback {
           override def onSuccess(pullResult: PullResult): Unit = {
-            if (pullResult.getPullStatus==PullStatus.FOUND){
+            if (pullResult.getPullStatus == PullStatus.FOUND) {
               info("success pull from tlq")
             }
             val fetchPartitionData = FetchPartitionData(

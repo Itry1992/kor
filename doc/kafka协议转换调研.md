@@ -1310,6 +1310,7 @@ kafka通过重平衡流程来确定每一个partition最多只能有一个消费
   tlq 发送消息时并没有返回offset
   消费者初始化后根据commited_offset来确定消费的起始位置,或者可以使用seek系列函数来指定位置开始消费。
   消费者每次poll时，由消费组客户端指定offset。htp系统中，没用根据指定offset拉取的同时，提交committed_offset的功能，（offset>=0的模式不支持进行commit,-1等模式不支持自定义offset拉取）。
+
 - 提议方案
   
   希望htp broker提供对应功能的支持，或者代理服务器自己管理commited_offset,或者htp mgr来储存commited_offset。
@@ -1363,6 +1364,50 @@ kafka通过重平衡流程来确定每一个partition最多只能有一个消费
   kafka通过produceId和mesaage seq来实现消息的幂等性
 
 - 方案提议
+
+
+
+# kafka offset管理实现方案
+
+kafka使用一个特殊主题 \_\_commited_offset来储存以offset，同时，kafka会维护一份缓存，来提高查询效率。
+
+## Current Offset
+
+对kafka消费者，拉取消息仅使用Current Offset。Current Offset保存在Consumer客户端中，它表示Consumer希望收到的下一条消息的序号。它仅仅在poll()方法中使用。例如，Consumer第一次调用poll()方法后收到了20条消息，那么Current Offset就被设置为20。这样Consumer下一次调用poll()方法时，Kafka就知道应该从序号为21的消息开始读取。这样就能够保证每次Consumer poll消息时，都能够收到不重复的消息。
+
+## Committed Offset
+
+Committed Offset保存在Broker上，它表示Consumer已经确认消费过的消息的序号。主要通过`commitSync`和`commitAsync` API来操作。举个例子，Consumer通过poll() 方法收到20条消息后，此时Current Offset就是20，经过一系列的逻辑处理后，并没有调用`consumer.commitAsync()`或`consumer.commitSync()`来提交Committed Offset，那么此时Committed Offset依旧是0。
+
+Committed Offset主要用于Consumer Rebalance。在Consumer Rebalance的过程中，一个partition被分配给了一个Consumer，那么这个Consumer该从什么位置开始消费消息呢？答案就是Committed Offset。另外，如果一个Consumer消费了5条消息（poll并且成功commitSync）之后宕机了，重新启动之后它仍然能够从第6条消息开始消费，因为Committed Offset已经被Kafka记录为5。
+
+## Offset存储模型
+
+由于一个partition只能固定的交给一个消费者组中的一个消费者消费，因此Kafka保存offset时并不直接为每个消费者保存，而是以groupid-topic-partition -> offset的方式保存。如图所示：
+
+![](img/2022-12-12-14-05-50-image.png)
+
+**Kafka在保存Offset的时候，实际上是将Consumer Group和partition对应的offset以消息的方式保存在__consumers_offsets这个topic中**。
+
+__consumers_offsets默认拥有50个partition，可以通过
+
+```css
+Math.abs(groupId.hashCode() % offsets.topic.num.partitions) 
+```
+
+的方式来查询某个Consumer Group的offset信息保存在__consumers_offsets的哪个partition中。下图展示了__consumers_offsets中保存的offset消息的格式：
+
+![](img/2022-12-12-14-07-42-image.png)
+
+![](img/2022-12-12-14-08-12-image.png)
+
+如图所示，一条offset消息的格式为groupid-topic-partition -> offset。因此consumer poll消息时，已知groupid和topic，又通过Coordinator分配partition的方式获得了对应的partition，自然能够通过Coordinator查找__consumers_offsets的方式获得最新的offset了。
+
+前面我们已经描述过offset的存储模型，它是按照**groupid-topic-partition -> offset**的方式存储的。然而Kafka只提供了根据offset读取消息的模型，并不支持根据key读取消息的方式。那么Kafka是如何支持Offset的查询呢？
+
+答案是缓存，Consumer提交offset时，Kafka Offset Manager会首先追加一条条新的commit消息到__consumers_offsets topic中，然后更新对应的缓存。读取offset时从缓存中读取，而不是直接读取__consumers_offsets这个topic。
+
+同时Kafka为__consumers_offsets topic设置了Log Compaction功能。Log Compaction意味着对于有相同key的的不同value值，只保留最后一个版本。
 
 # 后续调研方向&待实现的功能
 
