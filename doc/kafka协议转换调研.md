@@ -345,7 +345,7 @@ Produce Request (Version: 9) => transactional_id acks timeout_ms [topic_data] TA
 
 | FIELD            | DESCRIPTION                                                                                                                                                                                                                                                                                 |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| transactional_id | The transactional ID, or null if the producer is not transactiona.<br/>暂不支持事务                                                                                                                                                                                                               |
+| transactional_id | The transactional ID, or null if the producer is not transactiona.<br/>                                                                                                                                                                                                                     |
 | acks             | The number of acknowledgments the producer requires the leader to have received before considering a request complete. Allowed values: 0 for no acknowledgments, 1 for only the leader and -1 for the full ISR.<br/>副本同步参数acks 0不需要等待同步，等于0的时候，不需要broker返回responseacks 1仅leader //RAFT-1 全部 |
 | timeout_ms       | The timeout to await a response in milliseconds.                                                                                                                                                                                                                                            |
 | topic_data       | Each topic to produce to.                                                                                                                                                                                                                                                                   |
@@ -1171,11 +1171,39 @@ Errors.CORRUPT_MESSAGE
 
 # kafka事务概述
 
+## 事务场景
+
+1. 最简单的需求是producer发的多条消息组成一个事务这些消息需要对consumer同时可见或者同时不可见 。
+2. producer可能会给多个topic，多个partition发消息，这些消息也需要能放在一个事务里面，这就形成了一个典型的分布式事务。
+3. kafka的应用场景经常是应用先消费一个topic，然后做处理再发到另一个topic，这个consume-transform-produce过程需要放到一个事务里面，比如在消息处理或者发送的过程中如果失败了，消费位点也不能提交。
+4. producer或者producer所在的应用可能会挂掉，新的producer启动以后需要知道怎么处理之前未完成的事务 。
+5. 流式处理的拓扑可能会比较深，如果下游只有等上游消息事务提交以后才能读到，可能会导致rt非常长吞吐量也随之下降很多，所以需要实现read committed和read uncommitted两种事务隔离级别。
+
 ## kafka 事务提供了 3 个功能
 
-- 多分区原子写入，对单次事务多个消息，要吗全部提交成功，要吗全部提交失败
+- 多分区原子写入，对单次事务多个消息，要么全部提交成功，要么全部提交失败，事务中所有的消息都将被成功写入或者丢弃。
+  - 例如，处理过程中发生了异常并导致事务终止，这种情况下，事务中的消息都不会被Consumer读取。现在我们来看下Kafka是如何实现原子的“读取-处理-写入”过程的。首先，我们来考虑一下原子“读取-处理-写入”周期是什么意思。简而言之，这意味着如果某个应用程序在某个topic tp0的偏移量X处读取到了消息A，并且在对消息A进行了一些处理（如B = F（A））之后将消息B写入topic tp1，则只有当消息A和B被认为被成功地消费并一起发布，或者完全不发布时，整个读取过程写入操作是原子的。
+    现在，只有当消息A的偏移量X被标记为消耗时，消息A才被认为是从topic tp0消耗的，消费到的数据偏移量（record offset）将被标记为提交偏移量（Committing offset）。在Kafka中，我们通过写入一个名为offsets topic的内部Kafka topic来记录offset commit。消息仅在其offset被提交给offsets topic时才被认为成功消费。
+    由于offset commit只是对Kafkatopic的另一次写入，并且由于消息仅在提交偏移量时被视为成功消费，所以跨多个主题和分区的原子写入也启用原子“读取-处理-写入”循环：提交偏移量X到offset topic和消息B到tp1的写入将是单个事务的一部分，所以整个步骤都是原子的。
 - 粉碎“僵尸实例”，保证对单个事务 id,只有一个 producor 可以进行事务性写入
 - 读事务消息，对消费者，提供读提交和读未提交的能力
+
+## 几个相关概念
+
+- 协调者
+  因为producer发送消息可能是分布式事务，所以引入了常用的2PC，所以有事务协调者(Transaction Coordinator)。
+
+- kafka使用一个内部topic来保存事务日志
+  这个和 commited_offset管理是一致的,事务日志是Transaction Coordinator管理的状态的持久化，因为不需要回溯事务的历史状态，所以事务日志只用保存最近的事务状态。
+
+- Control Message
+  为了区分写入Partition的消息被Commit还是Abort，Kafka引入了一种特殊类型的消息，即`Control Message`。该类消息的Value内不包含任何应用相关的数据，并且不会暴露给应用程序。它只用于Broker与Client间的内部通信。
+  
+  对于Producer端事务，Kafka以Control Message的形式引入一系列的`Transaction Marker`。Consumer即可通过该标记判定对应的消息被Commit了还是Abort了，然后结合该Consumer配置的隔离级别决定是否应该将该消息返回给应用程序。
+
+- TransactionalId
+  producer挂掉重启或者漂移到其它机器需要能关联的之前的未完成事务所以需要有一个唯一标识符来进行关联，这个就是TransactionalId，一个producer挂了，另一个有相同TransactionalId的producer能够接着处理这个事务未完成的状态，
+  TransactionalId能关联producer，也需要避免两个使用相同TransactionalId的producer同时存在，所以引入了producer epoch来保证对应一个TransactionalId只有一个活跃的producer epoch
 
 ## 事务处理 api 和相关参数
 
@@ -1364,8 +1392,6 @@ kafka通过重平衡流程来确定每一个partition最多只能有一个消费
   kafka通过produceId和mesaage seq来实现消息的幂等性
 
 - 方案提议
-
-
 
 # kafka offset管理实现方案
 
