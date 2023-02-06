@@ -26,8 +26,6 @@ public class KafkaCustomerTest {
         props.put("value.deserializer", "com.tong.kafka.common.serialization.StringDeserializer");
         props.put("max.poll.records", 10);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, OffsetResetStrategy.EARLIEST.toString());
-
-
         return new KafkaConsumer(props);
     }
 

@@ -359,7 +359,7 @@ Produce Request (Version: 9) => transactional_id acks timeout_ms [topic_data] TA
 
 ##### 消息结构
 
-![](./img/kafak_batch_maeesage.png)
+<img title="" src="./img/kafak_batch_maeesage.png" alt="" data-align="inline">
 
 对应类：
 
@@ -1169,6 +1169,83 @@ Errors.UNKNOWN_SERVER_ERROR
 Errors.CORRUPT_MESSAGE
 ```
 
+##### Fetch Session对fetch请求的优化
+
+参考：[KIP-227: Introduce Incremental FetchRequests to Increase Partition Scalability - Apache Kafka - Apache Software Foundation](https://cwiki.apache.org/confluence/display/KAFKA/KIP-227%3A+Introduce+Incremental+FetchRequests+to+Increase+Partition+Scalability#KIP227:IntroduceIncrementalFetchRequeststoIncreasePartitionScalability-FetchSessions)
+
+Kafka在[1.1.0](https://issues.apache.org/jira/browse/KAFKA-6254)以后的版本中优化了Fetch问题，引入了Fetch Session，Kafka由Broker来提供服务（通信、数据交互等）。每个分区会有一个Leader Broker，Broker/client会定期向Leader Broker发送Fetch请求，来获取数据，而对于分区数较大的Topic来说，需要发出的Fetch请求就会很大。这样会有两个问题：
+
+- Follower感兴趣的分区集很少改变，然而每个FetchRequest必须枚举Follower感兴趣的所有分区集合；
+- 即使自上一次FetchRequest以来分区中没有任何变化，我们仍然必须发回关于该分区的元数据。
+
+通过fetch session,可以对fetch请求和响应进行压缩
+
+fetch session 中封装了一个fetcher 的状态，对连续的fetch请求，fetch session 可以通过缓存查出以下信息：
+
+- topic name and topic partition index
+
+- 分区的最大fetch bytes
+
+- The fetch offset
+
+- The high water mark
+
+- The fetcher log start offset 
+
+- The leader log start offset
+
+**FetchRequest Metadata的含义**
+
+| sessionId | SessionEpoch | 含义                                                            |
+| --------- | ------------ | ------------------------------------------------------------- |
+| 0         | -1           | 不创建新的session的情况下，进行全量查询                                       |
+| 0         | 0            | 如果可以，创建一个新的session。并且这个新的session epoch 从1开始                   |
+| $ID       | 0            | 关闭$Id 对应的session,然后如果可以，创建一个新session,并且这个新的session epoch 从1开始 |
+| $ID       | $EPOCH       | 如果id和epoch正确，进行增量查询.                                          |
+| $ID       | -1           | 关闭 $ID对应的seesion.进行全量查询.                                      |
+
+**什么是增量查询**
+
+增量查询包含前一个session id,和递增的session epoch。如非必要，不需要传递需要查询的分区元数据（ partition_id ，fetch_offset ，start_offset ，max_bytes）
+
+仅在以下场景中，需要附加分区的信息：
+
+- clients想通知broker 更改分区的maxBytes, fetchOffset,logStart
+
+- 之前的fetch session中没有但是clients想要新增的分区
+
+- 之前fetch session中存在，但是客户端想要移除的分区
+
+如果客户端想要拉取的信息没有任何改变，fetch请求中将不包含任何分区信息
+
+如果客户端想要移除某个分区，可以添加到fetch协议的 removed_topic => removed_topic_name [removed_partition_id]
+
+**FETCH_RESPONSE中的改变**
+
+FetchResponse也会包含一个32位的sessionId
+
+| RequestSessionId | Meaning                          |
+| ---------------- | -------------------------------- |
+| 0                | 没有session被创建                     |
+| $ID              | 下一次fetch请求可以通过这个SessionID来构建增量请求 |
+
+增量响应：
+
+响应中一般不需要包含分区相关信息，除非以下情况发生：
+
+- broker想要通知客户端分区的highWatermark or broker logStartOffset 发生了改变
+- 有新的可用消息
+
+如果broker没有新的信息需要告知客户端，则响应中可以完全没有partition的消息
+
+## OFFSET_FOR_LEADER_EPOCH
+
+##### 功能
+
+如果leader 发送了切换，需要验证当前消费者offset是否超过了新leader的end offset,如果是，意味着发生了日志截断，需要重置position。broker 返回leader epoch 对应的起始位置
+
+## OFFSET_LIST
+
 # kafka事务概述
 
 ## 事务场景
@@ -1197,7 +1274,7 @@ Errors.CORRUPT_MESSAGE
   这个和 commited_offset管理是一致的,事务日志是Transaction Coordinator管理的状态的持久化，因为不需要回溯事务的历史状态，所以事务日志只用保存最近的事务状态。
 
 - Control Message
-  为了区分写入Partition的消息被Commit还是Abort，Kafka引入了一种特殊类型的消息，即`Control Message`。该类消息的Value内不包含任何应用相关的数据，并且不会暴露给应用程序。它只用于Broker与Client间的内部通信。
+  为了区分写入Partition的消息被Commit还是Abort，Kafka引入了一种特殊类型的消息，即`Control Message`。该类消息的Value内不包含任何应用相关的数据，并且不会暴露给应用程序。它只用于Broker与Client间的内部通信。`Control Message` 会被储存在消息相同的主题分区日志中。
   
   对于Producer端事务，Kafka以Control Message的形式引入一系列的`Transaction Marker`。Consumer即可通过该标记判定对应的消息被Commit了还是Abort了，然后结合该Consumer配置的隔离级别决定是否应该将该消息返回给应用程序。
 
@@ -1249,7 +1326,239 @@ Errors.CORRUPT_MESSAGE
 
 # 事务相关协议
 
-todo
+## INIT_PRODUCER_ID
+
+##### 功能
+
+初始化生产者id,每个trasnactionId下每个productId不会重复。
+
+除了返回PID外，`InitPidRequest`还会执行如下任务：
+
+- 增加该PID对应的epoch。具有相同PID但epoch小于该epoch的其它Producer（如果有）新开启的事务将被拒绝。
+- 恢复（Commit或Abort）之前的Producer未完成的事务（如果有）。
+
+`InitPidRequest`的处理过程是同步阻塞的。一旦该调用正确返回，Producer即可开始新的事务。
+
+##### 请求
+
+```
+InitProducerId Request (Version: 4) => transactional_id transaction_timeout_ms producer_id producer_epoch TAG_BUFFER 
+transactional_id => COMPACT_NULLABLE_STRING
+ transaction_timeout_ms => INT32
+ producer_id => INT64
+ producer_epoch => INT16
+```
+
+| FIELD                  | DESCRIPTION                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| transactional_id       | The transactional id, or null if the producer is not transactional.                                                                                     |
+| transaction_timeout_ms | The time in ms to wait before aborting idle transactions sent by this producer. This is only relevant if a TransactionalId has been defined.            |
+| producer_id            | The producer id. This is used to disambiguate requests if a transactional id is reused following its expiration.                                        |
+| producer_epoch         | The producer's current epoch. This will be checked against the producer epoch on the broker, and the request will return an error if they do not match. |
+| _tagged_fields         | The tagged fields                                                                                                                                       |
+
+##### 响应
+
+```
+InitProducerId Response (Version: 4) => throttle_time_ms error_code producer_id producer_epoch TAG_BUFFER 
+throttle_time_ms => INT32
+ error_code => INT16
+ producer_id => INT64
+ producer_epoch => INT16
+```
+
+| FIELD            | DESCRIPTION                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| throttle_time_ms | The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota. |
+| error_code       | The error code, or 0 if there was no error.                                                                                                  |
+| producer_id      | The current producer id.                                                                                                                     |
+| producer_epoch   | The current epoch associated with the producer id.                                                                                           |
+| _tagged_fields   | The tagged fields                                                                                                                            |
+
+## ADD_PARTITIONS_TO_TXN
+
+##### 功能
+
+Kafka提供`beginTransaction()`方法用于开启一个事务。调用该方法后，Producer本地会记录已经开启了事务，但`Transaction Coordinator`只有在Producer发送第一条消息后才认为事务已经开启。
+
+一个Producer可能会给多个`<Topic, Partition>`发送数据，给一个新的`<Topic, Partition>`发送数据前，它需要先向`Transaction Coordinator`发送`AddPartitionsToTxnRequest`。
+
+`Transaction Coordinator`会将该`<Transaction, Topic, Partition>`存于`Transaction Log`内，并将其状态置为`BEGIN`，如上图中步骤4.1所示。
+
+有了该信息后，我们才可以在后续步骤中为每个`Topic, Partition>`设置COMMIT或者ABORT标记。
+
+另外，如果该`<Topic, Partition>`为该事务中第一个`<Topic, Partition>`，`Transaction Coordinator`还会启动对该事务的计时（每个事务都有自己的超时时间）。
+
+##### 请求
+
+AddPartitionsToTxn Request (Version: 3) => transactional_id producer_id producer_epoch [topics] TAG_BUFFER 
+  transactional_id => COMPACT_STRING
+  producer_id => INT64
+  producer_epoch => INT16
+  topics => name [partitions] TAG_BUFFER 
+    name => COMPACT_STRING
+    partitions => INT32
+
+| FIELD            | DESCRIPTION                                            |
+| ---------------- | ------------------------------------------------------ |
+| transactional_id | The transactional id corresponding to the transaction. |
+| producer_id      | Current producer id in use by the transactional id.    |
+| producer_epoch   | Current epoch associated with the producer id.         |
+| topics           | The partitions to add to the transaction.              |
+| name             | The name of the topic.                                 |
+| partitions       | The partition indexes to add to the transaction        |
+| _tagged_fields   | The tagged fields                                      |
+| _tagged_fields   | The tagged fields                                      |
+
+##### 响应
+
+AddPartitionsToTxn Response (Version: 3) => throttle_time_ms [results] TAG_BUFFER 
+  throttle_time_ms => INT32
+  results => name [results] TAG_BUFFER 
+    name => COMPACT_STRING
+    results => partition_index error_code TAG_BUFFER 
+      partition_index => INT32
+      error_code => INT16
+
+| FIELD            | DESCRIPTION                                                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| throttle_time_ms | Duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota. |
+| results          | The results for each topic.                                                                                                              |
+| name             | The topic name.                                                                                                                          |
+| results          | The results for each partition                                                                                                           |
+| partition_index  | The partition indexes.                                                                                                                   |
+| error_code       | The response error code.                                                                                                                 |
+| _tagged_fields   | The tagged fields                                                                                                                        |
+| _tagged_fields   | The tagged fields                                                                                                                        |
+| _tagged_fields   | The tagged fields                                                                                                                        |
+
+## END_TXN
+
+##### 功能
+
+## ADD_OFFSETS_TO_TXN & TXN_OFFSET_COMMIT
+
+##### 功能
+
+为了提供事务性，Producer新增了`sendOffsetsToTransaction`方法，该方法将多组消息的发送和消费放入同一批处理内。
+
+该方法先判断在当前事务中该方法是否已经被调用并传入了相同的Group ID。若是，直接跳到下一步；若不是，则向`Transaction Coordinator`发送`AddOffsetsToTxnRequests`请求，`Transaction Coordinator`将对应的所有`<Topic, Partition>`存于`Transaction Log`中，并将其状态记为`BEGIN`。该方法会阻塞直到收到响应。
+
+作为`sendOffsetsToTransaction`方法的一部分，在处理完`AddOffsetsToTxnRequest`后，Producer也会发送`TxnOffsetCommit`请求给`Consumer Coordinator`从而将本事务包含的与读操作相关的各`<Topic, Partition>`的Offset持久化到内部的`__consumer_offsets`中。
+
+在此过程中，`Consumer Coordinator`会通过PID和对应的epoch来验证是否应该允许该Producer的该请求。
+
+# kafka事务流程
+
+![](img/499bd681b1fa165e31d8a106d47d6f8c9f383e51.png)
+
+##### 找到`Transaction Coordinator`
+
+由于`Transaction Coordinator`是分配PID和管理事务的核心，因此Producer要做的第一件事情就是通过向任意一个Broker发送`FindCoordinator`请求找到`Transaction Coordinator`的位置【步骤1】。
+
+注意：只有应用程序为Producer配置了`Transaction ID`时才可使用事务特性，也才需要这一步。
+
+另外，由于事务性要求Producer开启幂等特性，因此通过将`transactional.id`设置为非空从而开启事务特性的同时也需要通过将`enable.idempotence`设置为true来开启幂等特性。
+
+##### 获取PID
+
+找到`Transaction Coordinator`后，具有幂等特性的Producer必须发起`InitPidRequest`请求以获取PID【步骤2】。
+
+注意：只要开启了幂等特性即必须执行该操作，而无须考虑该Producer是否开启了事务特性。
+
+* 如果事务特性被开启   
+  `InitPidRequest`会发送给`Transaction Coordinator`。如果`Transaction Coordinator`是第一次收到包含有该`Transaction ID`的InitPidRequest请求，它将会把该`<TransactionID, PID>`存入`Transaction Log`，如上图中【步骤2.1】所示。
+
+这样可保证该对应关系被持久化，从而保证即使`Transaction Coordinator`宕机该对应关系也不会丢失。
+
+除了返回PID外，`InitPidRequest`还会执行如下任务：
+
+- 增加该PID对应的epoch。具有相同PID但epoch小于该epoch的其它Producer（如果有）新开启的事务将被拒绝。
+- 恢复（Commit或Abort）之前的Producer未完成的事务（如果有）。
+
+注意：`InitPidRequest`的处理过程是同步阻塞的。一旦该调用正确返回，Producer即可开始新的事务。
+
+另外，如果事务特性未开启，`InitPidRequest`可发送至任意Broker，并且会得到一个全新的唯一的PID。该Producer将只能使用幂等特性以及单一Session内的事务特性，而不能使用跨Session的事务特性。
+
+##### 开启事务
+
+Kafka从0.11.0.0版本开始，提供`beginTransaction()`方法用于开启一个事务。调用该方法后，Producer本地会记录已经开启了事务，但`Transaction Coordinator`只有在Producer发送第一条消息后才认为事务已经开启。
+
+**Consume-Transform-Produce**
+
+这一阶段，包含了整个事务的数据处理过程，并且包含了多种请求。
+
+**AddPartitionsToTxnRequest**
+
+一个Producer可能会给多个`<Topic, Partition>`发送数据，给一个新的`<Topic, Partition>`发送数据前，它需要先向`Transaction Coordinator`发送`AddPartitionsToTxnRequest`。
+
+`Transaction Coordinator`会将该`<Transaction, Topic, Partition>`存于`Transaction Log`内，并将其状态置为`BEGIN`，如上图中步骤4.1所示。
+
+有了该信息后，我们才可以在后续步骤中为每个`Topic, Partition>`设置COMMIT或者ABORT标记（如上图中步骤5.2所示）。
+
+另外，如果该`<Topic, Partition>`为该事务中第一个`<Topic, Partition>`，`Transaction Coordinator`还会启动对该事务的计时（每个事务都有自己的超时时间）。
+
+**ProduceRequest**  
+Producer通过一个或多个`ProduceRequest`发送一系列消息。除了应用数据外，该请求还包含了PID，epoch，和`Sequence Number`。该过程如上图中步骤4.2所示。
+
+**AddOffsetsToTxnRequest**  
+为了提供事务性，Producer新增了`sendOffsetsToTransaction`方法，该方法将多组消息的发送和消费放入同一批处理内。
+
+该方法先判断在当前事务中该方法是否已经被调用并传入了相同的Group ID。若是，直接跳到下一步；若不是，则向`Transaction Coordinator`发送`AddOffsetsToTxnRequests`请求，`Transaction Coordinator`将对应的所有`<Topic, Partition>`存于`Transaction Log`中，并将其状态记为`BEGIN`，如上图中步骤4.3所示。该方法会阻塞直到收到响应。
+
+**TxnOffsetCommitRequest**  
+作为`sendOffsetsToTransaction`方法的一部分，在处理完`AddOffsetsToTxnRequest`后，Producer也会发送`TxnOffsetCommit`请求给`Consumer Coordinator`从而将本事务包含的与读操作相关的各`<Topic, Partition>`的Offset持久化到内部的`__consumer_offsets`中，如上图步骤4.4所示。
+
+在此过程中，`Consumer Coordinator`会通过PID和对应的epoch来验证是否应该允许该Producer的该请求。
+
+这里需要注意：
+
+- 写入`__consumer_offsets`的Offset信息在当前事务Commit前对外是不可见的。也即在当前事务被Commit前，可认为该Offset尚未Commit，也即对应的消息尚未被完成处理。
+- `Consumer Coordinator`并不会立即更新缓存中相应`<Topic, Partition>`的Offset，因为此时这些更新操作尚未被COMMIT或ABORT。
+
+### Commit或Abort事务
+
+一旦上述数据写入操作完成，应用程序必须调用`KafkaProducer`的`commitTransaction`方法或者`abortTransaction`方法以结束当前事务。
+
+EndTxnRequest  
+`commitTransaction`方法使得Producer写入的数据对下游Consumer可见。`abortTransaction`方法通过`Transaction Marker`将Producer写入的数据标记为`Aborted`状态。下游的Consumer如果将`isolation.level`设置为`READ_COMMITTED`，则它读到被Abort的消息后直接将其丢弃而不会返回给客户程序，也即被Abort的消息对应用程序不可见。
+
+无论是Commit还是Abort，Producer都会发送`EndTxnRequest`请求给`Transaction Coordinator`，并通过标志位标识是应该Commit还是Abort。
+
+收到该请求后，`Transaction Coordinator`会进行如下操作
+
+1. 将`PREPARE_COMMIT`或`PREPARE_ABORT`消息写入`Transaction Log`，如上图中步骤5.1所示
+2. 通过`WriteTxnMarker`请求以`Transaction Marker`的形式将`COMMIT`或`ABORT`信息写入用户数据日志以及`Offset Log`中，如上图中步骤5.2所示
+3. 最后将`COMPLETE_COMMIT`或`COMPLETE_ABORT`信息写入`Transaction Log`中，如上图中步骤5.3所示
+
+补充说明：对于`commitTransaction`方法，它会在发送`EndTxnRequest`之前先调用flush方法以确保所有发送出去的数据都得到相应的ACK。对于`abortTransaction`方法，在发送`EndTxnRequest`之前直接将当前Buffer中的事务性消息（如果有）全部丢弃，但必须等待所有被发送但尚未收到ACK的消息发送完成。
+
+上述第二步是实现将一组读操作与写操作作为一个事务处理的关键。因为Producer写入的数据Topic以及记录Comsumer Offset的Topic会被写入相同的`Transactin Marker`，所以这一组读操作与写操作要么全部COMMIT要么全部ABORT。
+
+WriteTxnMarkerRequest  
+上面提到的`WriteTxnMarkerRequest`由`Transaction Coordinator`发送给当前事务涉及到的每个`<Topic, Partition>`的Leader。收到该请求后，对应的Leader会将对应的`COMMIT(PID)`或者`ABORT(PID)`控制信息写入日志，如上图中步骤5.2所示。
+
+该控制消息向Broker以及Consumer表明对应PID的消息被Commit了还是被Abort了。
+
+这里要注意，如果事务也涉及到`__consumer_offsets`，即该事务中有消费数据的操作且将该消费的Offset存于`__consumer_offsets`中，`Transaction Coordinator`也需要向该内部Topic的各Partition的Leader发送`WriteTxnMarkerRequest`从而写入`COMMIT(PID)`或`COMMIT(PID)`控制信息。
+
+写入最终的`COMPLETE_COMMIT`或`COMPLETE_ABORT`消息  
+写完所有的`Transaction Marker`后，`Transaction Coordinator`会将最终的`COMPLETE_COMMIT`或`COMPLETE_ABORT`消息写入`Transaction Log`中以标明该事务结束，如上图中步骤5.3所示。
+
+此时，`Transaction Log`中所有关于该事务的消息全部可以移除。当然，由于Kafka内数据是Append Only的，不可直接更新和删除，这里说的移除只是将其标记为null从而在Log Compact时不再保留。
+
+另外，`COMPLETE_COMMIT`或`COMPLETE_ABORT`的写入并不需要得到所有Rreplica的ACK，因为如果该消息丢失，可以根据事务协议重发。
+
+补充说明，如果参与该事务的某些`<Topic, Partition>`在被写入`Transaction Marker`前不可用，它对`READ_COMMITTED`的Consumer不可见，但不影响其它可用`<Topic, Partition>`的COMMIT或ABORT。在该`<Topic, Partition>`恢复可用后，`Transaction Coordinator`会重新根据`PREPARE_COMMIT`或`PREPARE_ABORT`向该`<Topic, Partition>`发送`Transaction Marker`。
+
+##### 总结
+
+- `PID`与`Sequence Number`的引入实现了写操作的幂等性
+- 写操作的幂等性结合`At Least Once`语义实现了单一Session内的`Exactly Once`语义
+- `Transaction Marker`与`PID`提供了识别消息是否应该被读取的能力，从而实现了事务的隔离性
+- Offset的更新标记了消息是否被读取，从而将对读操作的事务处理转换成了对写（Offset）操作的事务处理
+- Kafka事务的本质是，将一组写操作（如果有）对应的消息与一组读操作（如果有）对应的Offset的更新进行同样的标记（即`Transaction Marker`）来实现事务中涉及的所有读写操作同时对外可见或同时对外不可见
+- Kafka只提供对Kafka本身的读写操作的事务性，不提供包含外部系统的事务性
 
 # kafka服务端io模型概述
 

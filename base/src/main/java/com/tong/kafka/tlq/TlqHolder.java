@@ -40,7 +40,6 @@ public class TlqHolder {
             } catch (TLQClientException e) {
                 throw new RuntimeException(e);
             }
-
         }
     }
 }

@@ -17,8 +17,8 @@ public class TransactionProducer {
         props.put("buffer.memory", 33554432); // 缓存大小，根据本机内存大小配置
         props.put("linger.ms", 1000); // 发送频率，满足任务一个条件发送
         props.put("client.id", "producer-syn-2"); // 发送端id,便于统计
-        props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
-        props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+        props.put("key.serializer", "com.tong.kafka.common.serialization.StringSerializer");
+        props.put("value.serializer", "com.tong.kafka.common.serialization.StringSerializer");
         props.put("transactional.id", "producer-1"); // 每台机器唯一
         props.put("enable.idempotence", true); // 设置幂等性
         return props;
