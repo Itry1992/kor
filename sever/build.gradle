@@ -9,6 +9,7 @@ compileScala {
 dependencies {
     implementation project(':base')
     implementation project(':server_common')
+    implementation project(":adapter")
     implementation libs.scalaLibrary
     implementation libs.scalaLogging
     implementation libs.scalaCollectionCompat

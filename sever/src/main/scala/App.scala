@@ -1,22 +1,22 @@
 import com.tong.kafka.common.utils.Utils
-import kafka.server.{AdapterSever, KafkaConfig}
+import kafka.server.{AdapterConfig, AdapterSever}
 
-import java.net.InetAddress
 import java.util.Properties
 
 object App {
-  val port = 9999
 
   def getProps(): Properties = {
 
     val props = Utils.loadProps("server.properties")
+    props.setProperty(AdapterConfig.AdapterNodeId, "0")
+    props.setProperty(AdapterConfig.AdapterListenAddress, "localhost:9999")
     props
   }
 
   def main(args: Array[String]): Unit = {
 
-    val config = KafkaConfig.fromProps(getProps())
-    val sever = new AdapterSever(brokerId = 1, port = port, config = config)
+    val config = AdapterConfig.fromProps(getProps())
+    val sever = new AdapterSever(brokerId = config.brokerId, host = config.getListenNode, config = config)
     sever.startup();
   }
 }

@@ -5,11 +5,13 @@ import com.tong.kafka.clients.producer.ProducerConfig;
 import com.tong.kafka.clients.producer.ProducerRecord;
 import com.tong.kafka.clients.producer.RecordMetadata;
 import com.tong.kafka.common.serialization.StringSerializer;
+import com.yammer.metrics.reporting.ConsoleReporter;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 public class KafkaProducerTest2 implements Runnable {
     private final KafkaProducer<String, String> producer;
@@ -59,6 +61,7 @@ public class KafkaProducerTest2 implements Runnable {
                 Exception e) {
             e.printStackTrace();
         } finally {
+            ConsoleReporter.enable(1, TimeUnit.SECONDS);
             producer.close();
         }
 

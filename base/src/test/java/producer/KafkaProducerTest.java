@@ -32,7 +32,7 @@ public class KafkaProducerTest implements Runnable {
         props.put("key.serializer", StringSerializer.class.getName());
         props.put("value.serializer", StringSerializer.class.getName());
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, CompressionType.ZSTD.name);
-        props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG,MyPartitioner.class.getName());
+        props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, MyPartitioner.class.getName());
 //        props.put(ProducerConfig.PARTITIONER_CLASS_CONFIG,"com.tong.kafka.clients.producer.RoundRobinPartitioner");
 //        props.put(ProducerConfig.)
 //        props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG,"false");
@@ -55,8 +55,8 @@ public class KafkaProducerTest implements Runnable {
                 });
 
                 result.get();
-//                if (i % 5 == 0)
-//                    Thread.sleep(100);
+                if (i % 5 == 0)
+                    Thread.sleep(10000);
             }
 //            countDownLatch.await();
             System.out.println("end::" + (System.currentTimeMillis() - l));
@@ -70,7 +70,7 @@ public class KafkaProducerTest implements Runnable {
     }
 
     public static void main(String args[]) {
-        KafkaProducerTest test = new KafkaProducerTest("TOPIC_TEST");
+        KafkaProducerTest test = new KafkaProducerTest("topic_test0");
         Thread thread = new Thread(test);
         thread.start();
     }

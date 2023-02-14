@@ -11,5 +11,4 @@ dependencies {
     implementation libs.snappy_java
     implementation 'org.junit.jupiter:junit-jupiter-api:5.9.0'
     implementation 'org.junit.jupiter:junit-jupiter-engine:5.9.0'
-    implementation fileTree(dir: '../libs', includes: ['*.jar'])
 }

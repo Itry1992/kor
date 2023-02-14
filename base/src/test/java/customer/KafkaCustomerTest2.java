@@ -4,8 +4,6 @@ import com.tong.kafka.clients.consumer.*;
 import com.tong.kafka.common.TopicPartition;
 
 import java.time.Duration;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Properties;
 
@@ -31,17 +29,18 @@ public class KafkaCustomerTest2 {
     }
 
     public static void main(String[] args) {
-        consumer.subscribe(Arrays.asList(topic), new ConsumerRebalanceListener() {
-            @Override
-            public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
-                System.out.println("onPartitionsRevoked");
-            }
-
-            @Override
-            public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
-                System.out.println("onPartitionsAssigned");
-            }
-        });
+//        consumer.subscribe(Arrays.asList(topic), new ConsumerRebalanceListener() {
+//            @Override
+//            public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+//                System.out.println("onPartitionsRevoked");
+//            }
+//
+//            @Override
+//            public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+//                System.out.println("onPartitionsAssigned");
+//            }
+//        });
+        consumer.assign(Collections.singletonList(new TopicPartition("TOPIC_TEST", 0)));
         try {
             int i = 0;
             while (true) {

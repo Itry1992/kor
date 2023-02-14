@@ -1,17 +1,20 @@
 package kafka.server
 
 import com.tong.kafka.clients.CommonClientConfigs
+import com.tong.kafka.common.Node
 import com.tong.kafka.common.metrics._
 import com.tong.kafka.common.network.ListenerName
 import com.tong.kafka.common.security.auth.SecurityProtocol
 import com.tong.kafka.common.security.scram.internals.ScramMechanism
 import com.tong.kafka.common.security.token.delegation.internals.DelegationTokenCache
 import com.tong.kafka.common.utils.{LogContext, Time}
+import com.tong.kafka.manager.mock.MockManager
+import com.tong.kafka.produce.mock.MockProduce
 import com.tong.kafka.server.common.BrokerState
 import kafka.cluster.EndPoint
 import kafka.network.{SampleAcceptor, SocketServer}
 import kafka.security.CredentialProvider
-import kafka.server.Sever.{BrokerIdLabel, ClusterIdLabel, MetricsPrefix, NodeIdLabel}
+import kafka.server.Sever.{BrokerIdLabel, ClusterIdLabel, MetricsPrefix}
 import kafka.utils.{CoreUtils, Logging}
 
 import java.util.concurrent.atomic.AtomicBoolean
@@ -26,7 +29,7 @@ trait Server {
 }
 
 
-class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, val port: Int, val config: KafkaConfig) extends Server with Logging {
+class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val config: AdapterConfig) extends Server with Logging {
   private val startupComplete = new AtomicBoolean(false)
   private val isShuttingDown = new AtomicBoolean(false)
   private val isStartingUp = new AtomicBoolean(false)
@@ -53,15 +56,17 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, val port: Int, val c
       val tokenCache = new DelegationTokenCache(ScramMechanism.mechanismNames)
       val credentialProvider = new CredentialProvider(ScramMechanism.mechanismNames, tokenCache)
       val apiVersionManager = new BrokerApiVersionManager()
-      val point = new EndPoint("localhost", port, new ListenerName("ll_"), SecurityProtocol.PLAINTEXT)
+      val point = new EndPoint(host.host(), host.port(), new ListenerName("ll_"), SecurityProtocol.PLAINTEXT)
       socketServer = new SocketServer(config = config, endpoints = List(point), metrics, time = time, credentialProvider, apiVersionManager)
-      val apiHandler = new AdapterRequestHandler(socketServer.requestChannel, apiVersionManager, time)
+      val tlqManager = new MockManager
+      val topicManager = new HashTopicManager(config.getAdapterBroker)
+      val tlqProduce = new MockProduce()
+      val apiHandler = new AdapterRequestHandler(socketServer.requestChannel, apiVersionManager, time, config, tlqManager, tlqProduce = tlqProduce, topicManager = topicManager)
       requestHandlerPool = new KafkaRequestHandlerPool(brokerId = brokerId, requestChannel = socketServer.requestChannel, apis = apiHandler, time, numThreads = config.numIoThreads, requestHandlerAvgIdleMetricName = s"requestHandlerAvgIdleMetric", logAndThreadNamePrefix = s"${SampleAcceptor.ThreadPrefix}")
       socketServer.enableRequestProcessing()
       _brokerState = BrokerState.RUNNING
       startupComplete.set(true)
     }
-
   }
 
   override def shutdown(): Unit = {
@@ -134,11 +139,9 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, val port: Int, val c
     val contextLabels = new java.util.HashMap[String, Object]
     contextLabels.put(ClusterIdLabel, clusterId)
 
-    if (config.usesSelfManagedQuorum) {
-      contextLabels.put(NodeIdLabel, config.nodeId.toString)
-    } else {
-      contextLabels.put(BrokerIdLabel, config.brokerId.toString)
-    }
+
+    contextLabels.put(BrokerIdLabel, config.brokerId.toString)
+
 
     contextLabels.putAll(config.originalsWithPrefix(CommonClientConfigs.METRICS_CONTEXT_PREFIX))
     new KafkaMetricsContext(MetricsPrefix, contextLabels)
