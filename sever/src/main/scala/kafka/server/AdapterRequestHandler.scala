@@ -17,6 +17,7 @@ import com.tong.kafka.common.requests.ProduceResponse.PartitionResponse
 import com.tong.kafka.common.requests._
 import com.tong.kafka.common.utils.{BufferSupplier, ByteUtils, Time}
 import com.tong.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
+import com.tong.kafka.consumer.{ITlqConsumer, TlqOffsetRequest, TopicPartitionOffsetData}
 import com.tong.kafka.manager.ITlqManager
 import com.tong.kafka.produce.exception.MessageTooLagerException
 import com.tong.kafka.produce.{ITlqProduce, KafkaRecordAttr}
@@ -27,7 +28,7 @@ import kafka.utils.Implicits.MapExtensionMethods
 import kafka.utils.Logging
 
 import java.nio.ByteBuffer
-import java.util.concurrent.{CompletableFuture, CountDownLatch}
+import java.util.concurrent.CompletableFuture
 import java.util.stream.Collectors
 import java.util.{Collections, Optional}
 import java.{lang, util}
@@ -41,11 +42,12 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
                             config: AdapterConfig,
                             tlqManager: ITlqManager,
                             topicManager: AdapterTopicManager,
-                            tlqProduce: ITlqProduce
+                            tlqProduce: ITlqProduce,
+                            tlqConsumer: ITlqConsumer
                            ) extends ApiRequestHandler with Logging {
   private val decompressionBufferSupplier = BufferSupplier.create
   this.logIdent = "AdapterRequestHandler"
-  val MIN_INCREMENTAL_FETCH_SESSION_EVICTION_MS: Long = 120000
+  private val MIN_INCREMENTAL_FETCH_SESSION_EVICTION_MS: Long = 120000
   private val fetchManager = new FetchManager(Time.SYSTEM,
     new FetchSessionCache(1000,
       MIN_INCREMENTAL_FETCH_SESSION_EVICTION_MS))
@@ -76,6 +78,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         case ApiKeys.HEARTBEAT => handleHeartbeatRequest(request)
         case ApiKeys.FETCH => handleFetchRequest(request)
         case ApiKeys.OFFSET_COMMIT => handleOffsetCommitRequest(request, requestLocal)
+        case ApiKeys.LEAVE_GROUP => handleLeaveGroupRequest(request)
         case _ => trace(s"Some API key not be handler apiKey: ${request.header.apiKey}")
       }
     } catch {
@@ -106,7 +109,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     val unauthorizedTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
     val nonExistingTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
     val invalidRequestResponses = mutable.Map[TopicPartition, PartitionResponse]()
-    val authorizedRequestInfo = mutable.Map[TopicPartition, MemoryRecords]()
+    val interestedRequestInfo = mutable.Map[TopicPartition, MemoryRecords]()
     produceRequest.data().topicData().forEach(topic => topic.partitionData().forEach((pt: PartitionProduceData) => {
       val topicPartition = new TopicPartition(topic.name, pt.index)
       if (!tlqManager.hasTopic(topic.name())) {
@@ -115,7 +118,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       val memoryRecords = pt.records().asInstanceOf[MemoryRecords]
       try {
         ProduceRequest.validateRecords(request.header.apiVersion, memoryRecords)
-        authorizedRequestInfo += (topicPartition -> memoryRecords)
+        interestedRequestInfo += (topicPartition -> memoryRecords)
       } catch {
         case e: ApiException =>
           invalidRequestResponses += topicPartition -> new PartitionResponse(Errors.forException(e))
@@ -166,14 +169,14 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       }
     }
 
-    if (authorizedRequestInfo.isEmpty)
+    if (interestedRequestInfo.isEmpty)
       sendResponseCallback(Map.empty)
     else {
       // request
       val responseStatus = mutable.Map[TopicPartition, PartitionResponse]()
       val futures = mutable.ArrayBuffer[CompletableFuture[Void]]()
       //拆解消息，然后发送
-      authorizedRequestInfo.foreach {
+      interestedRequestInfo.foreach {
         //MemoryRecords 包含 List<BatchRecord>
         case (topicPartition, records: MemoryRecords) => {
           val recordMap = readRecordFromMemoryRecords(records)
@@ -205,9 +208,8 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         }
       }
       if (produceRequest.acks() != 0 && futures.nonEmpty) {
-        CompletableFuture.allOf(futures.toSeq: _*).get()
+        CompletableFuture.allOf(futures.toSeq: _*).thenRun(() => sendResponseCallback(responseStatus.toMap))
       }
-      sendResponseCallback(responseStatus.toMap)
     }
   }
 
@@ -348,7 +350,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
                 .setErrorCode(Errors.NONE.code())
                 .setPartitionIndex(partitionIndex)
                 .setLeaderId(topicManager.getLeaderNode(new TopicPartition(topic, partitionIndex)).id())
-                .setLeaderEpoch(0)
+                .setLeaderEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH)
                 //分片和leader节点id，
                 .setReplicaNodes(nodeIds)
                 //以同步的节点Id
@@ -381,7 +383,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
 
     val responseData = new InitProducerIdResponseData()
       .setProducerId(1)
-      .setProducerEpoch(0)
+      .setProducerEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH.toShort)
       .setThrottleTimeMs(0)
       .setErrorCode(Errors.NONE.code())
     val responseBody = new InitProducerIdResponse(responseData)
@@ -390,6 +392,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
 
   //加入组，后续会向该节点执行SyncGroup,
   // 应该等到join_group超时时间后再返回所有的成员，供leader进行分配
+  //tlq 目前不支持订阅模式，所有节点都返回非消费组leader，禁用客户端自定义分配，然后sync_group直接返回，不触发重平衡流程
   def handleJoinGroupRequest(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     val joinGroupRequest = request.body[JoinGroupRequest]
     val groupInstanceId = Option(joinGroupRequest.data.groupInstanceId)
@@ -407,7 +410,6 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       ""
 
     def getJoinGroupResponseByError(errors: Errors) = {
-
       new JoinGroupResponse(
         new JoinGroupResponseData()
           .setThrottleTimeMs(0)
@@ -496,27 +498,52 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
   def handleOffsetFetchRequest(request: RequestChannel.Request): Unit = {
     val header = request.header
     val offsetFetchRequest = request.body[OffsetFetchRequest]
-    val groupIds = offsetFetchRequest.groupIds().asScala
+    val groupIds: mutable.Buffer[String] = offsetFetchRequest.groupIds().asScala
     val groupToTopicPartitions: mutable.Map[String, util.List[TopicPartition]] = offsetFetchRequest.groupIdsToPartitions().asScala
+    //响应数据
     val groupToErrorMap = mutable.Map.empty[String, Errors]
     val groupToPartitionData = mutable.Map.empty[String, util.Map[TopicPartition, OffsetFetchResponse.PartitionData]]
 
-
-    groupIds.foreach(groupId => {
+    val committedOffsetMap = tlqConsumer.getCommittedOffset(groupToTopicPartitions.asJava)
+    committedOffsetMap.forEach((groupId, groupData) => {
+      if (Option(groupData.getError).getOrElse(Errors.NONE) != Errors.NONE) {
+        groupToErrorMap += (groupId -> groupData.getError)
+      }
       val groupMap = mutable.Map.empty[TopicPartition, OffsetFetchResponse.PartitionData]
-
-      groupToTopicPartitions.get(groupId).foreach(t => t.forEach((partition: TopicPartition) => {
-        val partitionData = new OffsetFetchResponse.PartitionData(-1, Optional.ofNullable(-1), "", Errors.NONE)
-        groupMap += (partition -> partitionData)
-      }))
-      groupToErrorMap += (groupId -> Errors.NONE)
-      groupToPartitionData += (groupId -> groupMap.asJava)
+      val tpOffsetData = groupData.getTpToOffsetDataMap
+      tpOffsetData.forEach((tp, offsetData) => {
+        if (Option(offsetData.getError).getOrElse(Errors.NONE) != Errors.NONE) {
+          val partitionData = new OffsetFetchResponse.PartitionData(-1, Optional.ofNullable(0), "", offsetData.getError)
+          groupMap += (tp, partitionData)
+        }
+        else {
+          val partitionData = new OffsetFetchResponse.PartitionData(offsetData.getOffset, Optional.ofNullable(0), "", Errors.NONE)
+          groupMap += (tp, partitionData)
+        }
+      })
     })
-
     val offsetFetchResponse = new OffsetFetchResponse(0,
       groupToErrorMap.asJava, groupToPartitionData.asJava)
     requestChannel.sendResponse(request, offsetFetchResponse, None)
   }
+
+
+  def handleLeaveGroupRequest(request: RequestChannel.Request): Unit = {
+    val leaveGroupRequest = request.body[LeaveGroupRequest]
+
+    val members = leaveGroupRequest.members.asScala
+    val leaveGroupResponse = new LeaveGroupResponse(
+      new LeaveGroupResponseData()
+        .setErrorCode(Errors.NONE.code())
+        .setMembers(members.map(m =>
+          new LeaveGroupResponseData.MemberResponse()
+            .setMemberId(m.memberId())
+            .setGroupInstanceId("0")
+            .setErrorCode(Errors.NONE.code())
+        ).asJava))
+    requestChannel.sendResponse(request, leaveGroupResponse, None)
+  }
+
 
   def handleHeartbeatRequest(request: RequestChannel.Request): Unit = {
     val heartbeatRequest = request.body[HeartbeatRequest]
@@ -545,40 +572,43 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     val offsetRequest = request.body[ListOffsetsRequest]
     val useOldStyleOffset = version == 0
 
-    def getOffset(topicPartition: TopicPartition, timestamp: Int): Int = {
-      if (timestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP) {
-        return 0
-      }
-      1
-    }
-
     def getErrorListOffsetsPartitionResponse(errors: Errors, partitionIndex: Int) = {
       new ListOffsetsResponseData.ListOffsetsPartitionResponse()
         .setErrorCode(errors.code())
         .setPartitionIndex(partitionIndex)
     }
 
-    val topics = offsetRequest.data().topics().asScala.map((offsetsTopic) => {
+    val tlqRequest = mutable.Map[TopicPartition, TlqOffsetRequest]()
+    offsetRequest.data().topics().forEach((topic) => {
+      topic.partitions().forEach(partitionData => {
+        val tp = new TopicPartition(topic.name(), partitionData.partitionIndex());
+        val offsetRequest = new TlqOffsetRequest(tp, partitionData.timestamp())
+        tlqRequest += (tp -> offsetRequest)
+      })
+    })
+    val partitionToOffsetData = tlqConsumer.getTimestampOffset(tlqRequest.asJava)
+
+    val topics = offsetRequest.data().topics().asScala.map(offsetsTopic => {
       val partitionResponse = offsetsTopic.partitions().asScala.map(partition => {
         val tp = new TopicPartition(offsetsTopic.name(), partition.partitionIndex())
-        val response = new ListOffsetsResponseData.ListOffsetsPartitionResponse()
-          .setErrorCode(Errors.NONE.code())
-          .setPartitionIndex(partition.partitionIndex())
-          .setLeaderEpoch(0)
-        if (useOldStyleOffset) {
-          val maxNumOffsets = partition.maxNumOffsets()
-          //v0老版本会返回之前的分段offset,根据Segments分段
-          //todo 如何兼容待处理
-          response.setOldStyleOffsets(List[lang.Long](getOffset(tp, partition.timestamp().toInt)).asJava)
+        val result: TopicPartitionOffsetData = partitionToOffsetData.get(tp)
+        val response = if (result.getError != Errors.NONE) {
+          getErrorListOffsetsPartitionResponse(result.getError, tp.partition())
         } else {
-          response.setOffset(if (partition.timestamp() == ListOffsetsRequest.EARLIEST_TIMESTAMP) {
-            0
+          val response = new ListOffsetsResponseData.ListOffsetsPartitionResponse()
+            .setErrorCode(Errors.NONE.code())
+            .setPartitionIndex(partition.partitionIndex())
+            .setLeaderEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH)
+          if (useOldStyleOffset) {
+            val maxNumOffsets = partition.maxNumOffsets()
+            //v0老版本会返回之前的分段offset,根据Segments分段
+            response.setOldStyleOffsets(List[lang.Long](result.getOffset).asJava)
           } else {
-            getOffset(tp, partition.partitionIndex())
-          })
+            response.setOffset(result.getOffset)
+          }
+          response
         }
         response
-
       })
       new ListOffsetsTopicResponse().setName(offsetsTopic.name())
         .setPartitions(partitionResponse.asJava)
@@ -596,14 +626,8 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     val clientId = request.header.clientId
     val fetchRequest = request.body[FetchRequest]
     val metadata = fetchRequest.metadata()
-    val topicNames =
-      if (fetchRequest.version() >= 13) {
-        //version 13 之后会分配id给topic
-        Collections.emptyMap[Uuid, String]()
-      } else {
-        Collections.emptyMap[Uuid, String]()
-      }
-
+    //此处协议限定，最大apiVersion是12，参考ApiMessageType.FETCH
+    val topicNames = Collections.emptyMap[Uuid, String]()
     val fetchData = fetchRequest.fetchData(topicNames)
     val forgottenTopics = fetchRequest.forgottenTopics(topicNames)
 
@@ -620,9 +644,8 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     val interesting = mutable.ArrayBuffer[(TopicIdPartition, FetchRequest.PartitionData)]()
 
     fetchContext.foreachPartition { (topicIdPartition, partitionData) =>
-      if (topicIdPartition.topic == null) {
-        //todo 其他初步验证错误
-        erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_ID)
+      if (!tlqManager.hasTopicPartition(topicIdPartition.topicPartition())) {
+        erroneous += topicIdPartition -> FetchResponse.partitionResponse(topicIdPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION)
       } else
         interesting += topicIdPartition -> partitionData
     }
@@ -777,8 +800,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     if (interesting.isEmpty) {
       processResponseCallback(Seq.empty)
     } else {
-
-      val defaultFetchMaxBytes = 55 * 1024 * 1024
+      val defaultFetchMaxBytes = 4 * 1024 * 1024 //4MB
       val fetchMaxBytes = Math.min(fetchRequest.maxBytes, defaultFetchMaxBytes)
       val fetchMinBytes = Math.min(fetchRequest.minBytes, fetchMaxBytes)
 
@@ -833,7 +855,6 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         MemoryRecords.withRecords(RecordBatch.CURRENT_MAGIC_VALUE, baseOffset, CompressionType.NONE, records.toList: _*)
       }
 
-      val countDownLatch = new CountDownLatch(interesting.size)
       val result = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]
       interesting.foreach { case (topicIdPartition, partitionData) =>
         //        tlqCustomer.pullMessage(PullType.PullContinue, -1, 4, new PullCallback {
@@ -885,7 +906,6 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
 
 
       }
-      countDownLatch.await()
       processResponseCallback(result.toList)
 
     }

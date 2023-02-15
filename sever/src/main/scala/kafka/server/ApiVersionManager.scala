@@ -26,8 +26,8 @@ object ApiVersionManager {
 
 }
 
-class BrokerApiVersionManager() extends ApiVersionManager {
-  val listenerType: ListenerType = ListenerType.ZK_BROKER
+class AdapterBrokerApiVersionManager() extends ApiVersionManager {
+  val listenerType: ListenerType = ListenerType.TLQ_ADAPTER_BROKER
   private val features = BrokerFeatures.createEmpty()
 
 

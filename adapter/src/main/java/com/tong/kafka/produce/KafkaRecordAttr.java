@@ -51,14 +51,26 @@ public class KafkaRecordAttr {
 
     }
 
+    public static final String OFFSET_DELTA = "offsetDelta";
+    public static final String CREATE_TIME = "createTime";
+    public static final String LENGTH = "length";
+    public static final String MAGIC = "magic";
 
     public Map<String, String> toAttrMap() {
         HashMap<String, String> attrMap = new HashMap<>(4);
-        attrMap.put("offsetDelta", String.valueOf(offsetDelta));
-        attrMap.put("createTime", String.valueOf(createTime));
-        attrMap.put("length", String.valueOf(length));
-        attrMap.put("magic", String.valueOf(magic));
+        attrMap.put(OFFSET_DELTA, String.valueOf(offsetDelta));
+        attrMap.put(CREATE_TIME, String.valueOf(createTime));
+        attrMap.put(LENGTH, String.valueOf(length));
+        attrMap.put(MAGIC, String.valueOf(magic));
         return attrMap;
+    }
+
+    public static KafkaRecordAttr formMap(Map<String, String> attr) {
+        return new KafkaRecordAttr()
+                .setMagic(Integer.parseInt(attr.get(MAGIC)))
+                .setLength(Integer.parseInt(attr.get(CREATE_TIME)))
+                .setCreateTime(Long.parseLong(attr.get(CREATE_TIME)))
+                .setOffsetDelta(Long.parseLong(attr.get(OFFSET_DELTA)));
     }
     //最小
 }

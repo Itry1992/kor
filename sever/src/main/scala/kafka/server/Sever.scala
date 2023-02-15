@@ -55,7 +55,7 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
       metrics = initializeMetrics(config, time, brokerId.toString)
       val tokenCache = new DelegationTokenCache(ScramMechanism.mechanismNames)
       val credentialProvider = new CredentialProvider(ScramMechanism.mechanismNames, tokenCache)
-      val apiVersionManager = new BrokerApiVersionManager()
+      val apiVersionManager = new AdapterBrokerApiVersionManager()
       val point = new EndPoint(host.host(), host.port(), new ListenerName("ll_"), SecurityProtocol.PLAINTEXT)
       socketServer = new SocketServer(config = config, endpoints = List(point), metrics, time = time, credentialProvider, apiVersionManager)
       val tlqManager = new MockManager

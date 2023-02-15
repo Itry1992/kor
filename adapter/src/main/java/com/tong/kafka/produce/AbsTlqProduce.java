@@ -5,16 +5,30 @@ import com.tong.kafka.common.header.Header;
 import com.tong.kafka.common.header.internals.RecordHeader;
 import com.tong.kafka.common.record.Record;
 import com.tong.kafka.common.utils.ByteUtils;
+import com.tong.kafka.manager.ITlqManager;
+import com.tong.kafka.manager.TlqBrokerNode;
+import com.tong.kafka.manager.TopicMetaData;
 import com.tongtech.client.message.Message;
 
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public abstract class AbsTlqProduce implements ITlqProduce {
+
+    private ITlqManager manager;
+
+    public AbsTlqProduce(ITlqManager manager) {
+        this.manager = manager;
+    }
+
+    public TlqBrokerNode getTlqBroker(TopicPartition topicPartition) {
+        Map<String, TopicMetaData> topicMetaData = manager.getTopicMetaData(Collections.singletonList(topicPartition.topic()));
+        return topicMetaData.get(topicPartition.topic()).getBind().get(topicPartition.partition());
+    }
+
+
     protected List<Message> buildBatchRecord(List<Record> records, KafkaRecordAttr kafkaRecordAttr, TopicPartition topicPartition) {
         return records.stream().map(r -> {
             long offset = r.offset();

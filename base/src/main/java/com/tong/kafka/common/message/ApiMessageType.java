@@ -26,29 +26,29 @@ import com.tong.kafka.common.protocol.types.Schema;
 import java.util.EnumSet;
 
 public enum ApiMessageType {
-    PRODUCE("Produce", (short) 0, ProduceRequestData.SCHEMAS, ProduceResponseData.SCHEMAS, (short) 0, (short) 9, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    FETCH("Fetch", (short) 1, FetchRequestData.SCHEMAS, FetchResponseData.SCHEMAS, (short) 0, (short) 12, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER)),
-    LIST_OFFSETS("ListOffsets", (short) 2, ListOffsetsRequestData.SCHEMAS, ListOffsetsResponseData.SCHEMAS, (short) 0, (short) 6, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    METADATA("Metadata", (short) 3, MetadataRequestData.SCHEMAS, MetadataResponseData.SCHEMAS, (short) 0, (short) 11, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER)),
+    PRODUCE("Produce", (short) 0, ProduceRequestData.SCHEMAS, ProduceResponseData.SCHEMAS, (short) 0, (short) 9, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
+    FETCH("Fetch", (short) 1, FetchRequestData.SCHEMAS, FetchResponseData.SCHEMAS, (short) 0, (short) 12, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER, ListenerType.TLQ_ADAPTER_BROKER)),
+    LIST_OFFSETS("ListOffsets", (short) 2, ListOffsetsRequestData.SCHEMAS, ListOffsetsResponseData.SCHEMAS, (short) 0, (short) 6, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
+    METADATA("Metadata", (short) 3, MetadataRequestData.SCHEMAS, MetadataResponseData.SCHEMAS, (short) 0, (short) 11, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER, ListenerType.TLQ_ADAPTER_BROKER)),
     LEADER_AND_ISR("LeaderAndIsr", (short) 4, LeaderAndIsrRequestData.SCHEMAS, LeaderAndIsrResponseData.SCHEMAS, (short) 0, (short) 5, EnumSet.of(ListenerType.ZK_BROKER)),
     STOP_REPLICA("StopReplica", (short) 5, StopReplicaRequestData.SCHEMAS, StopReplicaResponseData.SCHEMAS, (short) 0, (short) 3, EnumSet.of(ListenerType.ZK_BROKER)),
     UPDATE_METADATA("UpdateMetadata", (short) 6, UpdateMetadataRequestData.SCHEMAS, UpdateMetadataResponseData.SCHEMAS, (short) 0, (short) 7, EnumSet.of(ListenerType.ZK_BROKER)),
     CONTROLLED_SHUTDOWN("ControlledShutdown", (short) 7, ControlledShutdownRequestData.SCHEMAS, ControlledShutdownResponseData.SCHEMAS, (short) 0, (short) 3, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.CONTROLLER)),
-    OFFSET_COMMIT("OffsetCommit", (short) 8, OffsetCommitRequestData.SCHEMAS, OffsetCommitResponseData.SCHEMAS, (short) 0, (short) 8, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    OFFSET_FETCH("OffsetFetch", (short) 9, OffsetFetchRequestData.SCHEMAS, OffsetFetchResponseData.SCHEMAS, (short) 0, (short) 7, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    FIND_COORDINATOR("FindCoordinator", (short) 10, FindCoordinatorRequestData.SCHEMAS, FindCoordinatorResponseData.SCHEMAS, (short) 0, (short) 3, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    JOIN_GROUP("JoinGroup", (short) 11, JoinGroupRequestData.SCHEMAS, JoinGroupResponseData.SCHEMAS, (short) 0, (short) 7, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    HEARTBEAT("Heartbeat", (short) 12, HeartbeatRequestData.SCHEMAS, HeartbeatResponseData.SCHEMAS, (short) 0, (short) 4, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    LEAVE_GROUP("LeaveGroup", (short) 13, LeaveGroupRequestData.SCHEMAS, LeaveGroupResponseData.SCHEMAS, (short) 0, (short) 4, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    SYNC_GROUP("SyncGroup", (short) 14, SyncGroupRequestData.SCHEMAS, SyncGroupResponseData.SCHEMAS, (short) 0, (short) 5, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
+    OFFSET_COMMIT("OffsetCommit", (short) 8, OffsetCommitRequestData.SCHEMAS, OffsetCommitResponseData.SCHEMAS, (short) 0, (short) 8, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
+    OFFSET_FETCH("OffsetFetch", (short) 9, OffsetFetchRequestData.SCHEMAS, OffsetFetchResponseData.SCHEMAS, (short) 0, (short) 7, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
+    FIND_COORDINATOR("FindCoordinator", (short) 10, FindCoordinatorRequestData.SCHEMAS, FindCoordinatorResponseData.SCHEMAS, (short) 0, (short) 3, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
+    JOIN_GROUP("JoinGroup", (short) 11, JoinGroupRequestData.SCHEMAS, JoinGroupResponseData.SCHEMAS, (short) 0, (short) 7, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
+    HEARTBEAT("Heartbeat", (short) 12, HeartbeatRequestData.SCHEMAS, HeartbeatResponseData.SCHEMAS, (short) 0, (short) 4, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
+    LEAVE_GROUP("LeaveGroup", (short) 13, LeaveGroupRequestData.SCHEMAS, LeaveGroupResponseData.SCHEMAS, (short) 0, (short) 4, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
+    SYNC_GROUP("SyncGroup", (short) 14, SyncGroupRequestData.SCHEMAS, SyncGroupResponseData.SCHEMAS, (short) 0, (short) 5, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
     DESCRIBE_GROUPS("DescribeGroups", (short) 15, DescribeGroupsRequestData.SCHEMAS, DescribeGroupsResponseData.SCHEMAS, (short) 0, (short) 5, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
     LIST_GROUPS("ListGroups", (short) 16, ListGroupsRequestData.SCHEMAS, ListGroupsResponseData.SCHEMAS, (short) 0, (short) 4, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
     SASL_HANDSHAKE("SaslHandshake", (short) 17, SaslHandshakeRequestData.SCHEMAS, SaslHandshakeResponseData.SCHEMAS, (short) 0, (short) 1, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER)),
-    API_VERSIONS("ApiVersions", (short) 18, ApiVersionsRequestData.SCHEMAS, ApiVersionsResponseData.SCHEMAS, (short) 0, (short) 3, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER)),
+    API_VERSIONS("ApiVersions", (short) 18, ApiVersionsRequestData.SCHEMAS, ApiVersionsResponseData.SCHEMAS, (short) 0, (short) 3, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER, ListenerType.TLQ_ADAPTER_BROKER)),
     CREATE_TOPICS("CreateTopics", (short) 19, CreateTopicsRequestData.SCHEMAS, CreateTopicsResponseData.SCHEMAS, (short) 0, (short) 7, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER)),
     DELETE_TOPICS("DeleteTopics", (short) 20, DeleteTopicsRequestData.SCHEMAS, DeleteTopicsResponseData.SCHEMAS, (short) 0, (short) 6, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER, ListenerType.CONTROLLER)),
     DELETE_RECORDS("DeleteRecords", (short) 21, DeleteRecordsRequestData.SCHEMAS, DeleteRecordsResponseData.SCHEMAS, (short) 0, (short) 2, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
-    INIT_PRODUCER_ID("InitProducerId", (short) 22, InitProducerIdRequestData.SCHEMAS, InitProducerIdResponseData.SCHEMAS, (short) 0, (short) 4, EnumSet.of(ListenerType.ZK_BROKER)),
+    INIT_PRODUCER_ID("InitProducerId", (short) 22, InitProducerIdRequestData.SCHEMAS, InitProducerIdResponseData.SCHEMAS, (short) 0, (short) 4, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.TLQ_ADAPTER_BROKER)),
     OFFSET_FOR_LEADER_EPOCH("OffsetForLeaderEpoch", (short) 23, OffsetForLeaderEpochRequestData.SCHEMAS, OffsetForLeaderEpochResponseData.SCHEMAS, (short) 0, (short) 4, EnumSet.of(ListenerType.ZK_BROKER, ListenerType.BROKER)),
     ADD_PARTITIONS_TO_TXN("AddPartitionsToTxn", (short) 24, AddPartitionsToTxnRequestData.SCHEMAS, AddPartitionsToTxnResponseData.SCHEMAS, (short) 0, (short) 3, EnumSet.of(ListenerType.ZK_BROKER)),
     ADD_OFFSETS_TO_TXN("AddOffsetsToTxn", (short) 25, AddOffsetsToTxnRequestData.SCHEMAS, AddOffsetsToTxnResponseData.SCHEMAS, (short) 0, (short) 3, EnumSet.of(ListenerType.ZK_BROKER)),
@@ -102,7 +102,7 @@ public enum ApiMessageType {
     private final short lowestSupportedVersion;
     private final short highestSupportedVersion;
     private final EnumSet<ListenerType> listeners;
-    
+
     ApiMessageType(String name, short apiKey, Schema[] requestSchemas, Schema[] responseSchemas, short lowestSupportedVersion, short highestSupportedVersion, EnumSet<ListenerType> listeners) {
         this.name = name;
         this.apiKey = apiKey;
@@ -112,7 +112,7 @@ public enum ApiMessageType {
         this.highestSupportedVersion = highestSupportedVersion;
         this.listeners = listeners;
     }
-    
+
     public static ApiMessageType fromApiKey(short apiKey) {
         switch (apiKey) {
             case 0:
@@ -255,7 +255,7 @@ public enum ApiMessageType {
                 throw new UnsupportedVersionException("Unsupported API key " + apiKey);
         }
     }
-    
+
     public ApiMessage newRequest() {
         switch (apiKey) {
             case 0:
@@ -398,7 +398,7 @@ public enum ApiMessageType {
                 throw new UnsupportedVersionException("Unsupported request API key " + apiKey);
         }
     }
-    
+
     public ApiMessage newResponse() {
         switch (apiKey) {
             case 0:
@@ -541,36 +541,36 @@ public enum ApiMessageType {
                 throw new UnsupportedVersionException("Unsupported response API key " + apiKey);
         }
     }
-    
+
     public short lowestSupportedVersion() {
         return this.lowestSupportedVersion;
     }
-    
+
     public short highestSupportedVersion() {
         return this.highestSupportedVersion;
     }
-    
+
     public EnumSet<ListenerType> listeners() {
         return this.listeners;
     }
-    
+
     public short apiKey() {
         return this.apiKey;
     }
-    
+
     public Schema[] requestSchemas() {
         return this.requestSchemas;
     }
-    
+
     public Schema[] responseSchemas() {
         return this.responseSchemas;
     }
-    
+
     @Override
     public String toString() {
         return this.name();
     }
-    
+
     public short requestHeaderVersion(short _version) {
         switch (apiKey) {
             case 0: // Produce
@@ -903,7 +903,7 @@ public enum ApiMessageType {
                 throw new UnsupportedVersionException("Unsupported API key " + apiKey);
         }
     }
-    
+
     public short responseHeaderVersion(short _version) {
         switch (apiKey) {
             case 0: // Produce
@@ -1228,11 +1228,12 @@ public enum ApiMessageType {
                 throw new UnsupportedVersionException("Unsupported API key " + apiKey);
         }
     }
-    
+
     public enum ListenerType {
         ZK_BROKER,
         BROKER,
-        CONTROLLER;
+        CONTROLLER,
+        TLQ_ADAPTER_BROKER;
     }
-    
+
 }

@@ -31,6 +31,11 @@ class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) ext
     nodes.getOrElse(getNodesFormConfig)
   }
 
+  /**
+   * 获取当前节点的node信息
+   *
+   * @return
+   */
   def getListenNode: Node = {
     if (thisNode.isEmpty) {
       getNodesFormConfig
