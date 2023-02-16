@@ -31,10 +31,10 @@ public interface ITlqConsumer {
      * @param offset
      * @param maxWaitTime
      * @param batchNum
-     * @param maxBate
+     * @param maxByte
      * @param minByte
      * @return
      */
-    CompletableFuture<MemoryRecords> pullMessage(TopicPartition topicPartition, long offset, int maxWaitTime, int batchNum, int maxBate, int minByte);
+    CompletableFuture<MemoryRecords> pullMessage(TopicPartition topicPartition, long offset, int maxWaitTime, int batchNum, int maxByte, int minByte);
 
 }

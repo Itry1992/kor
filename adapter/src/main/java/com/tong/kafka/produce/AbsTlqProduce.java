@@ -32,7 +32,7 @@ public abstract class AbsTlqProduce implements ITlqProduce {
     protected List<Message> buildBatchRecord(List<Record> records, KafkaRecordAttr kafkaRecordAttr, TopicPartition topicPartition) {
         return records.stream().map(r -> {
             long offset = r.offset();
-            KafkaRecordAttr attr = new KafkaRecordAttr()
+            KafkaRecordAttr attr = new KafkaRecordAttr(KafkaRecordAttr.INVALID_MAGIC)
                     .setMagic(kafkaRecordAttr.getMagic())
                     .setOffsetDelta((int) (offset))
                     .setCreateTime(r.timestamp());

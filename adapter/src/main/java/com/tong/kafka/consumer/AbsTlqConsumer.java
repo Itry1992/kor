@@ -1,5 +1,6 @@
 package com.tong.kafka.consumer;
 
+import com.tong.kafka.common.CompletableFutureUtil;
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.header.internals.RecordHeader;
 import com.tong.kafka.common.protocol.ByteBufferAccessor;
@@ -12,11 +13,11 @@ import com.tongtech.client.message.MessageExt;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 public abstract class AbsTlqConsumer implements ITlqConsumer {
     private volatile long EXPECTED_REQUEST_CONSUMPTION_TIME = 3;
@@ -44,10 +45,10 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
      * @return
      */
     public CompletableFuture<MemoryRecords> pullMessageChain(TlqBrokerNode node, String topic, long offset, int maxWaitTime, int batchNum, int maxBate, int minByte, List<MessageExt> lastMessages, long beginTimes) {
-        CompletableFuture<List<MessageExt>> pullMessage = pullMessage(node, offset, maxWaitTime, topic, batchNum);
-        return pullMessage.thenApply(messages -> {
-            if (messages.isEmpty())
-                return MemoryRecords.EMPTY;
+        CompletableFuture<List<MessageExt>> pullMessageResult = pullMessage(node, offset, maxWaitTime, topic, batchNum);
+        CompletableFutureUtil.completeTimeOut(pullMessageResult, Collections.emptyList(), maxWaitTime, TimeUnit.MILLISECONDS);
+        return pullMessageResult.thenCompose(messages -> {
+            if (messages.isEmpty()) return CompletableFuture.completedFuture(MemoryRecords.EMPTY);
             MessageExt last = messages.get(messages.size() - 1);
             messages.addAll(0, lastMessages);
             MemoryRecords memoryRecords = messageToMemoryRecords(messages, maxBate);
@@ -55,49 +56,35 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
             int nextMaxWait = maxWaitTime - (int) useTime;
             EXPECTED_REQUEST_CONSUMPTION_TIME = (useTime + EXPECTED_REQUEST_CONSUMPTION_TIME) / 2;
             if (memoryRecords.sizeInBytes() < minByte && System.currentTimeMillis() - beginTimes < nextMaxWait - EXPECTED_REQUEST_CONSUMPTION_TIME) {
-                CompletableFuture<MemoryRecords> memoryRecords1 = pullMessageChain(node, topic, last.getCommitLogOffset(), nextMaxWait, 2 * batchNum, maxBate, minByte, messages, System.currentTimeMillis());
-                try {
-                    return memoryRecords1.get(nextMaxWait, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                    return memoryRecords;
-                }
-            } else
-                return memoryRecords;
+                return pullMessageChain(node, topic, last.getCommitLogOffset(), nextMaxWait, Math.min(2 * batchNum, 2000), maxBate, minByte, messages, System.currentTimeMillis());
+            } else {
+                return CompletableFuture.completedFuture(memoryRecords);
+            }
         });
+
     }
 
     protected abstract CompletableFuture<List<MessageExt>> pullMessage(TlqBrokerNode node, long offset, int timeOut, String topic, int batchNum);
 
 
     protected MemoryRecords messageToMemoryRecords(List<MessageExt> messages, int maxByte) {
-        if (messages.isEmpty())
-            return MemoryRecords.EMPTY;
+        messages = messages.stream().filter(messageExt -> {
+            KafkaRecordAttr attr = KafkaRecordAttr.formMap(messageExt.getAttr());
+            return attr.getMagic() != KafkaRecordAttr.INVALID_MAGIC;
+        }).collect(Collectors.toList());
+        if (messages.isEmpty()) return MemoryRecords.EMPTY;
         MessageExt headMessage = messages.get(0);
         long baseOffset = headMessage.getCommitLogOffset();
         SimpleRecord headRecord = messageToSimpleRecord(headMessage);
         int size = Math.max(maxByte, AbstractRecords.estimateSizeInBytesUpperBound(RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, headRecord.key(), headRecord.value(), headRecord.headers()));
         ByteBuffer buffer = ByteBuffer.allocate(size);
-        MemoryRecordsBuilder builder = MemoryRecords.builder(buffer,
-                RecordBatch.MAGIC_VALUE_V2,
-                CompressionType.NONE,
-                TimestampType.LOG_APPEND_TIME,
-                baseOffset,
-                headMessage.getTime(),
-                0L,
-                (short) RecordBatch.NO_PARTITION_LEADER_EPOCH,
-                0,
-                false,
-                false,
-                RecordBatch.NO_PARTITION_LEADER_EPOCH
-        );
+        MemoryRecordsBuilder builder = MemoryRecords.builder(buffer, RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, TimestampType.LOG_APPEND_TIME, baseOffset, headMessage.getTime(), 0L, (short) RecordBatch.NO_PARTITION_LEADER_EPOCH, 0, false, false, RecordBatch.NO_PARTITION_LEADER_EPOCH);
 
         for (MessageExt message : messages) {
-            KafkaRecordAttr attr = KafkaRecordAttr.formMap(message.getAttr());
             SimpleRecord record = messageToSimpleRecord(headMessage);
             if (builder.hasRoomFor(message.getTime(), record.key(), record.value(), record.headers()))
                 builder.append(message.getTime(), record.key(), record.value(), record.headers());
-            else
-                break;
+            else break;
         }
         builder.close();
         return builder.build();

@@ -1,7 +1,6 @@
 package kafka.server
 
 import com.tong.kafka.common.errors.{ApiException, InvalidRequestException, UnsupportedCompressionTypeException}
-import com.tong.kafka.common.header.internals.RecordHeader
 import com.tong.kafka.common.internals.FatalExitError
 import com.tong.kafka.common.message.JoinGroupResponseData.JoinGroupResponseMember
 import com.tong.kafka.common.message.ListOffsetsResponseData.ListOffsetsTopicResponse
@@ -15,24 +14,21 @@ import com.tong.kafka.common.replica.ClientMetadata.DefaultClientMetadata
 import com.tong.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import com.tong.kafka.common.requests.ProduceResponse.PartitionResponse
 import com.tong.kafka.common.requests._
-import com.tong.kafka.common.utils.{BufferSupplier, ByteUtils, Time}
+import com.tong.kafka.common.utils.{BufferSupplier, Time}
 import com.tong.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import com.tong.kafka.consumer.{ITlqConsumer, TlqOffsetRequest, TopicPartitionOffsetData}
 import com.tong.kafka.manager.ITlqManager
 import com.tong.kafka.produce.exception.MessageTooLagerException
 import com.tong.kafka.produce.{ITlqProduce, KafkaRecordAttr}
 import com.tong.kafka.server.common.MetadataVersion
-import com.tongtech.client.message.MessageExt
 import kafka.network.RequestChannel
 import kafka.utils.Implicits.MapExtensionMethods
 import kafka.utils.Logging
 
-import java.nio.ByteBuffer
 import java.util.concurrent.CompletableFuture
 import java.util.stream.Collectors
 import java.util.{Collections, Optional}
 import java.{lang, util}
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.{immutable, mutable}
 import scala.jdk.CollectionConverters._
 
@@ -182,8 +178,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
           val recordMap = readRecordFromMemoryRecords(records)
           val sendResult = recordMap.map {
             case (batch, r) =>
-              val attr = new KafkaRecordAttr()
-                .setMagic(batch.magic())
+              val attr = new KafkaRecordAttr(batch.magic())
               try {
                 Option(tlqProduce.sendBatch(topicPartition, r.asJava, attr)
                   .whenComplete((sendRes, error) => {
@@ -825,89 +820,53 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         clientMetadata = clientMetadata
       )
 
-      def buildRecordsByTlqMessage(message: mutable.Buffer[MessageExt], baseOffset: Long): MemoryRecords = {
-        def readVarintVaule(byteBuffer: ByteBuffer) = {
-          val length = ByteUtils.readVarint(byteBuffer)
-          val value = byteBuffer.slice()
-          value.limit(length)
-          byteBuffer.position(byteBuffer.position() + length)
-          (length, value)
-        }
-
-        val records: mutable.Buffer[SimpleRecord] = message.map((message) => {
-          val body = message.getBody
-          val buffer = ByteBuffer.wrap(body)
-          val magic = buffer.get()
-          val (keySize, key) = readVarintVaule(buffer)
-          val (valueSize, value) = readVarintVaule(buffer)
-          val headerCount = ByteUtils.readVarint(buffer)
-          val headers = new ArrayBuffer[RecordHeader]()
-          for (i <- 0 until headerCount) {
-            val (_, hKey: ByteBuffer) = readVarintVaule(buffer)
-            val (_, hValue: ByteBuffer) = readVarintVaule(buffer)
-            headers += new RecordHeader(hKey, hValue)
-          }
-          val offsetIndex = ByteUtils.readVarint(buffer)
-          val timestamp = ByteUtils.readVarlong(buffer)
-          new SimpleRecord(timestamp, key, value, headers.toArray)
-        })
-
-        MemoryRecords.withRecords(RecordBatch.CURRENT_MAGIC_VALUE, baseOffset, CompressionType.NONE, records.toList: _*)
-      }
 
       val result = new mutable.ArrayBuffer[(TopicIdPartition, FetchPartitionData)]
-      interesting.foreach { case (topicIdPartition, partitionData) =>
-        //        tlqCustomer.pullMessage(PullType.PullContinue, -1, 4, new PullCallback {
-        //          override def onSuccess(pullResult: PullResult): Unit = {
-        //            if (pullResult.getPullStatus == PullStatus.FOUND) {
-        //              info("success pull from tlq")
-        //            }
-        //            val fetchPartitionData = FetchPartitionData(
-        //              error = Errors.NONE,
-        //              //最高以提交的记录
-        //              highWatermark = 999999,
-        //              logStartOffset = 0,
-        //              records = if (pullResult.getMsgFoundList.isEmpty) {
-        //                MemoryRecords.EMPTY
-        //              } else {
-        //                buildRecordsByTlqMessage(pullResult.getMsgFoundList.asScala, partitionData.fetchOffset)
-        //              },
-        //              divergingEpoch = Some(new FetchResponseData.EpochEndOffset().setEpoch(0).setEndOffset(99999)),
-        //              lastStableOffset = None,
-        //              abortedTransactions = None,
-        //              //下一次拉取的目的地
-        //              preferredReadReplica = None,
-        //              //对客户端没有意义
-        //              isReassignmentFetch = false
-        //            )
-        //            result += (topicIdPartition -> fetchPartitionData)
-        //            countDownLatch.countDown()
-        //          }
-        //
-        //          override def onException(throwable: Throwable): Unit = {
-        //            val fetchPartitionData = FetchPartitionData(
-        //              error = Errors.NONE,
-        //              //最高以提交的记录
-        //              highWatermark = partitionData.fetchOffset,
-        //              logStartOffset = 0,
-        //              records = MemoryRecords.EMPTY,
-        //              divergingEpoch = Some(new FetchResponseData.EpochEndOffset().setEpoch(0).setEndOffset(99999)),
-        //              lastStableOffset = Option(partitionData.fetchOffset),
-        //              abortedTransactions = None,
-        //              //下一次拉取的目的地
-        //              preferredReadReplica = None,
-        //              //对客户端没有意义
-        //              isReassignmentFetch = false
-        //            )
-        //            countDownLatch.countDown()
-        //            result += (topicIdPartition -> fetchPartitionData)
-        //          }
-        //        })
-
-
+      val futures = interesting.map {
+        case (topicIdPartition: TopicIdPartition, partitionData) =>
+          val tp = new TopicPartition(topicIdPartition.topic(), topicIdPartition.partition())
+          val future: CompletableFuture[MemoryRecords] = tlqConsumer.pullMessage(tp, partitionData.fetchOffset, params.maxWaitMs.toInt, config.getHtpPullBatchMums, params.maxBytes, params.minBytes)
+          future.whenComplete((record, error) => {
+            val fetchPartitionData = if (error != null) {
+              //Errors.NOT_LEADER_OR_FOLLOWER ||
+              //              error == Errors.REPLICA_NOT_AVAILABLE ||
+              //                error == Errors.KAFKA_STORAGE_ERROR ||
+              //                error == Errors.FENCED_LEADER_EPOCH ||
+              //                error == Errors.OFFSET_NOT_AVAILABLE
+              //UNKNOWN_TOPIC_OR_PARTITION
+              //UNKNOWN_TOPIC_ID
+              //INCONSISTENT_TOPIC_ID
+              //以上8个错误，客户端会重新跟新metadata
+              //OFFSET_OUT_OF_RANGE , 会重新查询offset
+              //              UNKNOWN_SERVER_ERROR,记录error的信息
+              //CORRUPT_MESSAGE->kafka expection
+              FetchPartitionData(error =
+                Errors.UNKNOWN_SERVER_ERROR,
+                highWatermark = 0,
+                logStartOffset = 0,
+                records = MemoryRecords.EMPTY,
+                divergingEpoch = None,
+                lastStableOffset = None,
+                abortedTransactions = None,
+                preferredReadReplica = None,
+                isReassignmentFetch = false)
+            } else {
+              FetchPartitionData(
+                highWatermark = Long.MaxValue,
+                logStartOffset = 0,
+                records = record,
+                divergingEpoch = None,
+                lastStableOffset = None,
+                abortedTransactions = None,
+                preferredReadReplica = None,
+                isReassignmentFetch = false)
+            }
+            result += (topicIdPartition -> fetchPartitionData)
+          })
+          future
       }
-      processResponseCallback(result.toList)
-
+      CompletableFuture.allOf(futures.toSeq: _*)
+        .thenRun(() => processResponseCallback(result.toList))
     }
   }
 

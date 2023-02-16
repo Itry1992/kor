@@ -2,6 +2,7 @@ package com.tong.kafka.produce;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * kafka record转换为 tlq message是，需要携带的自定义属性
@@ -13,6 +14,11 @@ public class KafkaRecordAttr {
     private int length;
 
     private int magic;
+
+
+    public KafkaRecordAttr(int magic) {
+        this.magic = magic;
+    }
 
     public long getOffsetDelta() {
         return offsetDelta;
@@ -54,7 +60,9 @@ public class KafkaRecordAttr {
     public static final String OFFSET_DELTA = "offsetDelta";
     public static final String CREATE_TIME = "createTime";
     public static final String LENGTH = "length";
-    public static final String MAGIC = "magic";
+    public static final String MAGIC = "kafka_magic";
+
+    public static final Integer INVALID_MAGIC = -1;
 
     public Map<String, String> toAttrMap() {
         HashMap<String, String> attrMap = new HashMap<>(4);
@@ -66,11 +74,11 @@ public class KafkaRecordAttr {
     }
 
     public static KafkaRecordAttr formMap(Map<String, String> attr) {
-        return new KafkaRecordAttr()
-                .setMagic(Integer.parseInt(attr.get(MAGIC)))
-                .setLength(Integer.parseInt(attr.get(CREATE_TIME)))
-                .setCreateTime(Long.parseLong(attr.get(CREATE_TIME)))
-                .setOffsetDelta(Long.parseLong(attr.get(OFFSET_DELTA)));
+        return new KafkaRecordAttr(INVALID_MAGIC)
+                .setMagic(Integer.parseInt(Optional.ofNullable(attr.get(MAGIC)).orElse(INVALID_MAGIC.toString())))
+                .setLength(Integer.parseInt(Optional.ofNullable(attr.get(CREATE_TIME)).orElse("0")))
+                .setCreateTime(Long.parseLong(Optional.ofNullable(attr.get(CREATE_TIME)).orElse("0")))
+                .setOffsetDelta(Long.parseLong(Optional.ofNullable(attr.get(OFFSET_DELTA)).orElse("0")));
     }
     //最小
 }

@@ -1,18 +1,18 @@
 package com.tong.kafka.consumer.mock;
 
 import com.tong.kafka.common.TopicPartition;
-import com.tong.kafka.consumer.ConsumerGroupOffsetData;
-import com.tong.kafka.consumer.ITlqConsumer;
-import com.tong.kafka.consumer.TlqOffsetRequest;
-import com.tong.kafka.consumer.TopicPartitionOffsetData;
+import com.tong.kafka.consumer.*;
+import com.tong.kafka.manager.TlqBrokerNode;
 import com.tong.kafka.produce.mock.MockProduce;
+import com.tongtech.client.message.MessageExt;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
-public class MockConsumer implements ITlqConsumer {
+public class MockConsumer extends AbsTlqConsumer implements ITlqConsumer {
     private MockProduce produce;
 
     public MockConsumer(MockProduce produce) {
@@ -54,5 +54,14 @@ public class MockConsumer implements ITlqConsumer {
         HashMap<TopicPartition, TopicPartitionOffsetData> result = new HashMap<>();
         requestMap.forEach((key, value) -> result.put(value.getTopicPartition(), new TopicPartitionOffsetData(key)));
         return result;
+    }
+
+
+    @Override
+    protected CompletableFuture<List<MessageExt>> pullMessage(TlqBrokerNode node, long offset, int timeOut, String topic, int batchNum) {
+        CompletableFuture<List<MessageExt>> listCompletableFuture = new CompletableFuture<>();
+        listCompletableFuture.complete(produce.getCacheMessage());
+        return listCompletableFuture;
+
     }
 }

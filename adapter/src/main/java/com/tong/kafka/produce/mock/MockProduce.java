@@ -9,10 +9,13 @@ import com.tong.kafka.produce.KafkaRecordAttr;
 import com.tong.kafka.produce.SendResult;
 import com.tong.kafka.produce.exception.MessageTooLagerException;
 import com.tongtech.client.message.Message;
+import com.tongtech.client.message.MessageExt;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public class MockProduce extends AbsTlqProduce {
     public MockProduce() {
@@ -40,7 +43,17 @@ public class MockProduce extends AbsTlqProduce {
     }
 
 
-    public List<Message> getCacheMessage() {
-        return cacheMessage;
+    public List<MessageExt> getCacheMessage() {
+        long baseOffset = offsetCache.get() - cacheMessage.size();
+        List<MessageExt> messageExts = IntStream.range(0, cacheMessage.size()).mapToObj(i -> {
+            Message message = cacheMessage.get(i);
+            MessageExt messageExt = new MessageExt();
+            messageExt.setBody(message.getBody());
+            messageExt.setAttr(message.getAttr());
+            messageExt.setCommitLogOffset(baseOffset + i);
+            messageExt.setTime((int) System.currentTimeMillis());
+            return messageExt;
+        }).collect(Collectors.toList());
+        return messageExts;
     }
 }

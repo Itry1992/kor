@@ -43,6 +43,15 @@ class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) ext
     thisNode.get
   }
 
+  /**
+   * 获取配置的Htp每次批量拉取消息数量
+   *
+   * @return
+   */
+  def getHtpPullBatchMums: Int = {
+    this.getInt(AdapterConfig.HtpPullBatchMums)
+  }
+
 
   private def getNodesFormConfig: List[Node] = {
     val nodeId = Option(getInt(AdapterNodeId).toInt)
@@ -95,15 +104,17 @@ class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) ext
 object AdapterConfig {
 
   //此处添加代理服务器需要配置的选项字段名
-  //e.g. TlqProduceNums= tlq.produce.nums;
-  val TlqProduceNums = "tlq.produce.nums"
-  val TlqProduceNumsDoc = "tlq生产者数量"
-  val AdapterList = "tlq.adapter.servers"
+  //e.g. HtpProduceNums= htp.produce.nums;
+  val HtpProduceNums = "htp.produce.nums"
+  val HtpProduceNumsDoc = "Htp生产者数量"
+  val AdapterList = "htp.adapter.servers"
   val AdapterListDoc = "其他代理服务器地址列表，地址格式这个列表的格式应该是nodeId1:host1:port1,nodeId2:host2:port2,...."
-  val AdapterNodeId = "tlq.adapter.nodeId"
+  val AdapterNodeId = "htp.adapter.nodeId"
   val AdapterNodeIdDoc = "代理服务器的节点Id"
-  val AdapterListenAddress = "tlq.adapter.listen"
+  val AdapterListenAddress = "htp.adapter.listen"
   val AdapterListenAddressDoc = "代理服务器监听地址，格式HOST:PORT"
+  val HtpPullBatchMums = "htp.pull.batch.nums"
+  val HtpPullBatchMumsDoc = "代理服务器每次向htp拉取消息是,拉取消息的数量，建议根据消息大小和kafka 客户端最小拉取大小配置"
 
 
   def fromProps(props: Properties): AdapterConfig =
@@ -116,10 +127,11 @@ object AdapterConfig {
     import ConfigDef.Importance._
     import ConfigDef.Type._
     KafkaConfig.configDef
-      .define(TlqProduceNums, INT, 1, HIGH, TlqProduceNumsDoc)
+      .define(HtpProduceNums, INT, 1, HIGH, HtpProduceNumsDoc)
       .define(AdapterList, LIST, null, HIGH, AdapterListDoc)
       .define(AdapterNodeId, INT, null, HIGH, AdapterNodeIdDoc)
       .define(AdapterListenAddress, STRING, "localhost:9999", HIGH, AdapterListenAddressDoc)
+      .define(HtpPullBatchMums, INT, 20, MEDIUM, HtpPullBatchMumsDoc)
   }
 
 
