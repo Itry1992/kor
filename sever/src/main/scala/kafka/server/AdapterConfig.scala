@@ -2,6 +2,7 @@ package kafka.server
 
 import com.tong.kafka.common.Node
 import com.tong.kafka.common.config.ConfigDef
+import com.tong.kafka.common.utils.Utils
 import kafka.server.AdapterConfig._
 import kafka.utils.Logging
 
@@ -36,11 +37,19 @@ class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) ext
    *
    * @return
    */
-  def getListenNode: Node = {
+  def getCurrentNode: Node = {
     if (thisNode.isEmpty) {
       getNodesFormConfig
     }
     thisNode.get
+  }
+
+
+  def getCoordinator(gruoupIds: List[String]): List[Node] = {
+    val brokers = getAdapterBroker
+    gruoupIds.map(key => {
+      brokers(Utils.abs(key.hashCode) % brokers.length)
+    })
   }
 
   /**
@@ -83,7 +92,7 @@ class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) ext
         value += n.get
       }
     })
-    val node = value.toList
+    val node = value.sortBy(n => n.id()).toList
     nodes = Option(node)
     node
   }

@@ -2,7 +2,7 @@ package kafka.server
 
 import com.tong.kafka.common.errors.{ApiException, InvalidRequestException, UnsupportedCompressionTypeException}
 import com.tong.kafka.common.internals.FatalExitError
-import com.tong.kafka.common.message.JoinGroupResponseData.JoinGroupResponseMember
+import com.tong.kafka.common.message.LeaveGroupResponseData.MemberResponse
 import com.tong.kafka.common.message.ListOffsetsResponseData.ListOffsetsTopicResponse
 import com.tong.kafka.common.message.MetadataResponseData.{MetadataResponsePartition, MetadataResponseTopic}
 import com.tong.kafka.common.message.ProduceRequestData.PartitionProduceData
@@ -15,7 +15,7 @@ import com.tong.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import com.tong.kafka.common.requests.ProduceResponse.PartitionResponse
 import com.tong.kafka.common.requests._
 import com.tong.kafka.common.utils.{BufferSupplier, Time}
-import com.tong.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
+import com.tong.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import com.tong.kafka.consumer.ITlqConsumer
 import com.tong.kafka.consumer.vo.{TlqOffsetRequest, TopicPartitionOffsetData}
 import com.tong.kafka.manager.ITlqManager
@@ -24,6 +24,7 @@ import com.tong.kafka.produce.ITlqProduce
 import com.tong.kafka.produce.exception.MessageTooLagerException
 import com.tong.kafka.produce.vo.KafkaRecordAttr
 import com.tong.kafka.server.common.MetadataVersion
+import kafka.group.{GroupCoordinator, JoinGroupResult, LeaveGroupResult, SyncGroupResult}
 import kafka.network.RequestChannel
 import kafka.utils.Implicits.MapExtensionMethods
 import kafka.utils.Logging
@@ -42,7 +43,8 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
                             tlqManager: ITlqManager,
                             topicManager: AdapterTopicManager,
                             tlqProduce: ITlqProduce,
-                            tlqConsumer: ITlqConsumer
+                            tlqConsumer: ITlqConsumer,
+                            val groupCoordinator: GroupCoordinator,
                            ) extends ApiRequestHandler with Logging {
   private val decompressionBufferSupplier = BufferSupplier.create
   this.logIdent = "AdapterRequestHandler"
@@ -64,7 +66,6 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         // before handing them to the request handler, so this path should not be exercised in practice
         throw new IllegalStateException(s"API ${request.header.apiKey} is not enabled")
       }
-      trace(s"accept request from client: ${request.header.clientId()} correlationId : ${request.header.correlationId()}, APIKEY:${request.header.apiKey()}")
       request.header.apiKey match {
         case ApiKeys.API_VERSIONS => handleApiVersionsRequest(request)
         case ApiKeys.METADATA => handleMetadataRequest(request)
@@ -79,7 +80,9 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         case ApiKeys.FETCH => handleFetchRequest(request)
         case ApiKeys.OFFSET_COMMIT => handleOffsetCommitRequest(request, requestLocal)
         case ApiKeys.LEAVE_GROUP => handleLeaveGroupRequest(request)
-        case _ => error(s"Some API key not be handler apiKey: ${request.header.apiKey}")
+        case _ =>
+          error(s"Some API key not be handler apiKey: ${request.header.apiKey}")
+          throw new RuntimeException(s"Some API key not be handler by adapter broker, apiKey: ${request.header.apiKey}")
       }
     } catch {
       case e: FatalExitError => throw e
@@ -112,6 +115,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     val interestedRequestInfo = mutable.Map[TopicPartition, MemoryRecords]()
     produceRequest.data().topicData().forEach(topic => topic.partitionData().forEach((pt: PartitionProduceData) => {
       val topicPartition = new TopicPartition(topic.name, pt.index)
+      topicManager.saveLeaderNode(topicPartition, config.getCurrentNode)
       if (!tlqManager.hasTopic(topic.name())) {
         nonExistingTopicResponses += topicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION)
       }
@@ -232,13 +236,15 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
   }
 
 
+
+
   def handleFindCoordinatorRequest(request: RequestChannel.Request): Unit = {
     val version = request.header.apiVersion
     val findCoordinatorRequest = request.body[FindCoordinatorRequest]
     if (version < FindCoordinatorRequest.MIN_BATCHED_VERSION) {
       val keyType = CoordinatorType.forId(findCoordinatorRequest.data().keyType())
       val key = findCoordinatorRequest.data().key()
-      val node = config.getListenNode
+      val node = config.getCoordinator(List(key)).head
       val responseBody = new FindCoordinatorResponse(
         new FindCoordinatorResponseData()
           .setErrorCode(Errors.NONE.code())
@@ -255,8 +261,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     //v4及之上支持此查找多个协调者
     val coordinators = findCoordinatorRequest.data.coordinatorKeys.asScala.map { key =>
       val keyType = CoordinatorType.forId(findCoordinatorRequest.data().keyType())
-      val key = findCoordinatorRequest.data().key()
-      val node = config.getListenNode
+      val node = config.getCoordinator(List(key)).head
       new FindCoordinatorResponseData.Coordinator()
         .setKey(key)
         .setErrorCode(Errors.NONE.code())
@@ -420,106 +425,161 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
   //加入组，后续会向该节点执行SyncGroup,
   // 应该等到join_group超时时间后再返回所有的成员，供leader进行分配
   //tlq 目前不支持订阅模式，所有节点都返回非消费组leader，禁用客户端自定义分配，然后sync_group直接返回，不触发重平衡流程
+
   def handleJoinGroupRequest(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     val joinGroupRequest = request.body[JoinGroupRequest]
+
+    // the callback for sending a join-group response
+    def sendResponseCallback(joinResult: JoinGroupResult): Unit = {
+      def createResponse(requestThrottleMs: Int): AbstractResponse = {
+        val protocolName = if (request.context.apiVersion() >= 7)
+          joinResult.protocolName.orNull
+        else
+          joinResult.protocolName.getOrElse(GroupCoordinator.NoProtocol)
+
+        val responseBody = new JoinGroupResponse(
+          new JoinGroupResponseData()
+            .setThrottleTimeMs(requestThrottleMs)
+            .setErrorCode(joinResult.error.code)
+            .setGenerationId(joinResult.generationId)
+            .setProtocolType(joinResult.protocolType.orNull)
+            .setProtocolName(protocolName)
+            .setLeader(joinResult.leaderId)
+            .setSkipAssignment(joinResult.skipAssignment)
+            .setMemberId(joinResult.memberId)
+            .setMembers(joinResult.members.asJava)
+        )
+
+        trace("Sending join group response %s for correlation id %d to client %s."
+          .format(responseBody, request.header.correlationId, request.header.clientId))
+        responseBody
+      }
+
+      requestChannel.sendResponse(request, createResponse(0), None)
+    }
+
     val groupInstanceId = Option(joinGroupRequest.data.groupInstanceId)
-    //   Only return MEMBER_ID_REQUIRED error if joinGroupRequest version is >= 4
+    // Only return MEMBER_ID_REQUIRED error if joinGroupRequest version is >= 4
     // and groupInstanceId is configured to unknown.
     val requireKnownMemberId = joinGroupRequest.version >= 4 && groupInstanceId.isEmpty
+    // let the coordinator handle join-group
+    val protocols = joinGroupRequest.data.protocols.valuesList.asScala.map { protocol =>
+      (protocol.name, protocol.metadata)
+    }.toList
 
-    def getMemberId: String = {
-      s"${request.header.clientId()}-${Uuid.randomUuid().toString}"
-    }
+    val supportSkippingAssignment = joinGroupRequest.version >= 9
 
-    val emptyProtocolName = if (request.context.apiVersion() >= 7)
-      null
-    else
-      ""
-
-    def getJoinGroupResponseByError(errors: Errors) = {
-      new JoinGroupResponse(
-        new JoinGroupResponseData()
-          .setThrottleTimeMs(0)
-          .setErrorCode(errors.code())
-          //客户端后续的offset，SYNC_GROUP等会携带该字段
-          .setGenerationId(-1)
-          .setProtocolType(None.orNull)
-          .setProtocolName(emptyProtocolName)
-          .setLeader("")
-          //如果为true 可以使客户端跳过分配，leader返回的分配结果将空结果
-          .setSkipAssignment(false)
-          .setMemberId(s"${request.header.clientId()}-${Uuid.randomUuid().toString}")
-          .setMembers(List.empty.asJava)
-      )
-    }
-
-    val requestMemberId = Option(joinGroupRequest.data().memberId())
-    val isMemberIdNull = requestMemberId.getOrElse("").equals("")
-    val responseBody: JoinGroupResponse = if (requireKnownMemberId && isMemberIdNull) {
-      getJoinGroupResponseByError(Errors.MEMBER_ID_REQUIRED)
-    } else {
-      val memberId: String =
-        if (isMemberIdNull) requestMemberId.getOrElse(getMemberId)
-        else
-          getMemberId
-      val protocols: util.List[JoinGroupRequestData.JoinGroupRequestProtocol] = joinGroupRequest.data().protocols().valuesList()
-      val pickedProtocol = Option(protocols.get(0))
-      new JoinGroupResponse(
-        new JoinGroupResponseData()
-          .setThrottleTimeMs(0)
-          .setErrorCode(Errors.NONE.code())
-          //客户端后续的offset，SYNC_GROUP等会携带该字段
-          .setGenerationId(0)
-          .setProtocolType(joinGroupRequest.data().protocolType())
-          .setProtocolName(pickedProtocol.map(_.name()).getOrElse(emptyProtocolName))
-          .setLeader(memberId)
-          //如果为true 可以使客户端跳过分配，leader返回的分配结果将空结果
-          .setSkipAssignment(false)
-          .setMemberId(memberId)
-          .setMembers(List[JoinGroupResponseMember](new JoinGroupResponseMember()
-            .setGroupInstanceId("0")
-            .setMemberId(memberId)
-            .setMetadata(pickedProtocol.map(_.metadata()).getOrElse(new Array[Byte](0)))
-          ).asJava))
-    }
-    requestChannel.sendResponse(request, responseBody, None)
+    groupCoordinator.handleJoinGroup(
+      joinGroupRequest.data.groupId,
+      joinGroupRequest.data.memberId,
+      groupInstanceId,
+      requireKnownMemberId,
+      supportSkippingAssignment,
+      request.header.clientId,
+      request.context.clientAddress.toString,
+      joinGroupRequest.data.rebalanceTimeoutMs,
+      joinGroupRequest.data.sessionTimeoutMs,
+      joinGroupRequest.data.protocolType,
+      protocols,
+      sendResponseCallback,
+      Option(joinGroupRequest.data.reason),
+      requestLocal)
 
   }
 
-  //返回分配结果，如果是leader,且上一步Sync_group允许leader分配，会携带分配结果
   def handleSyncGroupRequest(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     val syncGroupRequest = request.body[SyncGroupRequest]
 
-    val assignmentMap = immutable.Map.newBuilder[String, Array[Byte]]
-    syncGroupRequest.data.assignments.forEach { assignment =>
-      assignmentMap += (assignment.memberId -> assignment.assignment)
+    def sendResponseCallback(syncGroupResult: SyncGroupResult): Unit = {
+      requestChannel.sendResponse(request, new SyncGroupResponse(
+        new SyncGroupResponseData()
+          .setErrorCode(syncGroupResult.error.code)
+          .setProtocolType(syncGroupResult.protocolType.orNull)
+          .setProtocolName(syncGroupResult.protocolName.orNull)
+          .setAssignment(syncGroupResult.memberAssignment)
+          .setThrottleTimeMs(0)
+      ), None)
     }
 
-    def getResponseByError(error: Errors) = {
-      new SyncGroupResponse(
-        new SyncGroupResponseData()
-          .setErrorCode(error.code)
-          .setProtocolType(None.orNull)
-          .setProtocolName(None.orNull)
-          .setAssignment(Array.empty)
-          .setThrottleTimeMs(0)
+    if (!syncGroupRequest.areMandatoryProtocolTypeAndNamePresent()) {
+      // Starting from version 5, ProtocolType and ProtocolName fields are mandatory.
+      sendResponseCallback(SyncGroupResult(Errors.INCONSISTENT_GROUP_PROTOCOL))
+    } else {
+      val assignmentMap = immutable.Map.newBuilder[String, Array[Byte]]
+      syncGroupRequest.data.assignments.forEach { assignment =>
+        assignmentMap += (assignment.memberId -> assignment.assignment)
+      }
+      groupCoordinator.handleSyncGroup(
+        syncGroupRequest.data.groupId,
+        syncGroupRequest.data.generationId,
+        syncGroupRequest.data.memberId,
+        Option(syncGroupRequest.data.protocolType),
+        Option(syncGroupRequest.data.protocolName),
+        Option(syncGroupRequest.data.groupInstanceId),
+        assignmentMap.result(),
+        sendResponseCallback,
+        requestLocal
       )
     }
+  }
 
-    val memberId = Option(syncGroupRequest.data().memberId())
-    if (memberId.getOrElse("").isEmpty || !assignmentMap.result().contains(syncGroupRequest.data().memberId())
-    ) {
-      requestChannel.sendResponse(request, getResponseByError(Errors.UNKNOWN_MEMBER_ID), None)
+  def handleHeartbeatRequest(request: RequestChannel.Request): Unit = {
+    val heartbeatRequest = request.body[HeartbeatRequest]
+
+    // the callback for sending a heartbeat response
+    def sendResponseCallback(error: Errors): Unit = {
+      def createResponse(requestThrottleMs: Int): AbstractResponse = {
+        val response = new HeartbeatResponse(
+          new HeartbeatResponseData()
+            .setThrottleTimeMs(requestThrottleMs)
+            .setErrorCode(error.code))
+        trace("Sending heartbeat response %s for correlation id %d to client %s."
+          .format(response, request.header.correlationId, request.header.clientId))
+        response
+      }
+
+      requestChannel.sendResponse(request, createResponse(0), None)
     }
-    val syncGroupResponse = new SyncGroupResponse(
-      new SyncGroupResponseData()
-        .setErrorCode(Errors.NONE.code)
-        .setProtocolType(Option(syncGroupRequest.data().protocolType()).orNull)
-        .setProtocolName(Option(syncGroupRequest.data().protocolName()).orNull)
-        .setAssignment(memberId.map(m => assignmentMap.result().getOrElse(m, Array.empty)).getOrElse(Array.empty))
-        .setThrottleTimeMs(0)
-    )
-    requestChannel.sendResponse(request, syncGroupResponse, None)
+
+    // let the coordinator to handle heartbeat
+    groupCoordinator.handleHeartbeat(
+      heartbeatRequest.data.groupId,
+      heartbeatRequest.data.memberId,
+      Option(heartbeatRequest.data.groupInstanceId),
+      heartbeatRequest.data.generationId,
+      sendResponseCallback)
+
+  }
+
+  def handleLeaveGroupRequest(request: RequestChannel.Request): Unit = {
+    val leaveGroupRequest = request.body[LeaveGroupRequest]
+    val members = leaveGroupRequest.members.asScala.toList
+
+    def sendResponseCallback(leaveGroupResult: LeaveGroupResult): Unit = {
+      val memberResponses = leaveGroupResult.memberResponses.map(
+        leaveGroupResult =>
+          new MemberResponse()
+            .setErrorCode(leaveGroupResult.error.code)
+            .setMemberId(leaveGroupResult.memberId)
+            .setGroupInstanceId(leaveGroupResult.groupInstanceId.orNull)
+      )
+
+      def createResponse(requestThrottleMs: Int): AbstractResponse = {
+        new LeaveGroupResponse(
+          memberResponses.asJava,
+          leaveGroupResult.topLevelError,
+          requestThrottleMs,
+          leaveGroupRequest.version)
+      }
+
+      requestChannel.sendResponse(request, createResponse(0), None)
+    }
+
+    groupCoordinator.handleLeaveGroup(
+      leaveGroupRequest.data.groupId,
+      members,
+      sendResponseCallback)
+
   }
 
 
@@ -581,44 +641,6 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       requestChannel.sendResponse(request, createResponse(0, Errors.UNKNOWN_SERVER_ERROR, Map.empty), None)
       null
     })
-  }
-
-
-  def handleLeaveGroupRequest(request: RequestChannel.Request): Unit = {
-    val leaveGroupRequest = request.body[LeaveGroupRequest]
-
-    val members = leaveGroupRequest.members.asScala
-    val leaveGroupResponse = new LeaveGroupResponse(
-      new LeaveGroupResponseData()
-        .setErrorCode(Errors.NONE.code())
-        .setMembers(members.map(m =>
-          new LeaveGroupResponseData.MemberResponse()
-            .setMemberId(m.memberId())
-            .setGroupInstanceId("0")
-            .setErrorCode(Errors.NONE.code())
-        ).asJava))
-    requestChannel.sendResponse(request, leaveGroupResponse, None)
-  }
-
-
-  def handleHeartbeatRequest(request: RequestChannel.Request): Unit = {
-    val heartbeatRequest = request.body[HeartbeatRequest]
-
-    def sendResponseCallback(error: Errors): Unit = {
-      def createResponse(requestThrottleMs: Int): AbstractResponse = {
-        val response = new HeartbeatResponse(
-          new HeartbeatResponseData()
-            .setThrottleTimeMs(requestThrottleMs)
-            .setErrorCode(error.code))
-        trace("Sending heartbeat response %s for correlation id %d to client %s."
-          .format(response, request.header.correlationId, request.header.clientId))
-        response
-      }
-
-      requestChannel.sendResponse(request, createResponse(0), None)
-    }
-    //Errors.REBALANCE_IN_PROGRESS 来通知客户端发起reBalance
-    sendResponseCallback(Errors.NONE)
   }
 
 
@@ -904,11 +926,12 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       val futures = interesting.map {
         case (topicIdPartition: TopicIdPartition, partitionData) =>
           val tp = new TopicPartition(topicIdPartition.topic(), topicIdPartition.partition())
+          topicManager.saveLeaderNode(tp, config.getCurrentNode)
           if (tlqManager.hasTopicPartition(tp)) {
             val future: CompletableFuture[MemoryRecords] = tlqConsumer.pullMessage(tp, partitionData.fetchOffset, params.maxWaitMs.toInt, config.getHtpPullBatchMums, params.maxBytes, params.minBytes)
             future.whenComplete((record, throwable) => {
               val fetchPartitionData = if (throwable != null) {
-                error(throwable.getMessage,throwable)
+                error(throwable.getMessage, throwable)
                 //Errors.NOT_LEADER_OR_FOLLOWER ||
                 //              error == Errors.REPLICA_NOT_AVAILABLE ||
                 //                error == Errors.KAFKA_STORAGE_ERROR ||

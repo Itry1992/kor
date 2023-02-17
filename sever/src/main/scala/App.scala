@@ -16,7 +16,7 @@ object App {
   def main(args: Array[String]): Unit = {
 
     val config = AdapterConfig.fromProps(getProps())
-    val sever = new AdapterSever(brokerId = config.brokerId, host = config.getListenNode, config = config)
+    val sever = new AdapterSever(brokerId = config.brokerId, host = config.getCurrentNode, config = config)
     sever.startup();
   }
 }
