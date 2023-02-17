@@ -13,7 +13,6 @@ import com.tongtech.client.message.MessageExt;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -33,7 +32,7 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
         if (node.isPresent()) {
 //        CompletableFuture<List<MessageExt>> pullMessage = pullMessage(node, offset, maxWaitTime, topicPartition.topic(), batchNum);
 //        return pullMessage.thenApply(messages -> messageToMemoryRecords(messages, maxByte));
-            return pullMessageChain(node.get(), topicPartition.topic(), offset, maxWaitTime, batchNum, maxByte, minByte, new ArrayList<>(batchNum), System.currentTimeMillis());
+            return pullMessageChain(node.get(), topicPartition.topic(), offset, maxWaitTime, batchNum, maxByte, minByte, new ArrayList<>(), System.currentTimeMillis());
         }
         return CompletableFuture.completedFuture(MemoryRecords.EMPTY);
     }
@@ -54,7 +53,7 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
      */
     public CompletableFuture<MemoryRecords> pullMessageChain(TlqBrokerNode node, String topic, long offset, int maxWaitTime, int batchNum, int maxBate, int minByte, List<MessageExt> lastMessages, long beginTimes) {
         CompletableFuture<List<MessageExt>> pullMessageResult = pullMessage(node, offset, maxWaitTime, topic, batchNum);
-        CompletableFutureUtil.completeTimeOut(pullMessageResult, Collections.emptyList(), maxWaitTime + (int) EXPECTED_REQUEST_CONSUMPTION_TIME, TimeUnit.MILLISECONDS);
+        CompletableFutureUtil.completeTimeOut(pullMessageResult, lastMessages, maxWaitTime , TimeUnit.MILLISECONDS);
         return pullMessageResult.thenCompose(messages -> {
             if (messages.isEmpty()) return CompletableFuture.completedFuture(MemoryRecords.EMPTY);
             MessageExt last = messages.get(messages.size() - 1);
