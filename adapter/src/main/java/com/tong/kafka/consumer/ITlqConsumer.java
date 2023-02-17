@@ -1,6 +1,7 @@
 package com.tong.kafka.consumer;
 
 import com.tong.kafka.common.TopicPartition;
+import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.common.record.MemoryRecords;
 import com.tong.kafka.consumer.vo.CommitOffsetRequest;
 import com.tong.kafka.consumer.vo.ConsumerGroupOffsetData;
@@ -16,7 +17,7 @@ public interface ITlqConsumer {
     /**
      * 查询以提交的offset
      *
-     * @param groupMap 消费组->主题分区
+     * @param
      * @return 消费组->消费组内各个分区的committed_offset
      */
     CompletableFuture<ConsumerGroupOffsetData> getCommittedOffset(String groupId, List<TopicPartition> tps);
@@ -47,5 +48,5 @@ public interface ITlqConsumer {
      *
      * @param offsetMap
      */
-    CompletableFuture<Void> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap);
+    CompletableFuture<Map<TopicPartition, Errors>> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap);
 }

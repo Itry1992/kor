@@ -1,6 +1,7 @@
 package com.tong.kafka.consumer.mock;
 
 import com.tong.kafka.common.TopicPartition;
+import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.consumer.AbsTlqConsumer;
 import com.tong.kafka.consumer.ITlqConsumer;
 import com.tong.kafka.consumer.vo.CommitOffsetRequest;
@@ -77,7 +78,7 @@ public class MockConsumer extends AbsTlqConsumer implements ITlqConsumer {
     }
 
     @Override
-    public CompletableFuture<Void> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap) {
+    public CompletableFuture<Map<TopicPartition, Errors>> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap) {
         offsetMap.forEach((key, value) -> {
             commitedOffsetMap.put(key, value.getCommitOffset());
         });

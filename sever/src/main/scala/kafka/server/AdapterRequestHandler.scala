@@ -15,9 +15,9 @@ import com.tong.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import com.tong.kafka.common.requests.ProduceResponse.PartitionResponse
 import com.tong.kafka.common.requests._
 import com.tong.kafka.common.utils.{BufferSupplier, Time}
-import com.tong.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
+import com.tong.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import com.tong.kafka.consumer.ITlqConsumer
-import com.tong.kafka.consumer.vo.{TlqOffsetRequest, TopicPartitionOffsetData}
+import com.tong.kafka.consumer.vo.{CommitOffsetRequest, TlqOffsetRequest, TopicPartitionOffsetData}
 import com.tong.kafka.manager.ITlqManager
 import com.tong.kafka.manager.vo.TopicMetaData
 import com.tong.kafka.produce.ITlqProduce
@@ -234,8 +234,6 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     }
     result.toMap
   }
-
-
 
 
   def handleFindCoordinatorRequest(request: RequestChannel.Request): Unit = {
@@ -991,10 +989,10 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
   def handleOffsetCommitRequest(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     val header = request.header
     val offsetCommitRequest = request.body[OffsetCommitRequest]
-    val nonExistingTopicErrors = mutable.Map[TopicPartition, Errors]()
+    val topicPartitionToErrors = mutable.Map[TopicPartition, Errors]()
 
     def sendResponseCallback(commitStatus: Map[TopicPartition, Errors]): Unit = {
-      val combinedCommitStatus = commitStatus ++ nonExistingTopicErrors
+      val combinedCommitStatus = commitStatus ++ topicPartitionToErrors
       if (isDebugEnabled)
         combinedCommitStatus.forKeyValue { (topicPartition, error) =>
           if (error != Errors.NONE) {
@@ -1007,20 +1005,37 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     }
 
     val commitStatus = mutable.Map[TopicPartition, Errors]()
+    val tlqRequest = mutable.Map.empty[TopicPartition, CommitOffsetRequest]
     for (topicRequest <- offsetCommitRequest.data().topics().asScala) {
       val topicName = topicRequest.name();
       for (partitionReq <- topicRequest.partitions().asScala) {
         val tp = new TopicPartition(topicName, partitionReq.partitionIndex())
         if (!tlqManager.hasTopic(topicName)) {
-          nonExistingTopicErrors += (tp -> Errors.UNKNOWN_TOPIC_OR_PARTITION)
+          topicPartitionToErrors += (tp -> Errors.UNKNOWN_TOPIC_OR_PARTITION)
+        } else {
+          val req = new CommitOffsetRequest(tp)
+            .setCommitOffset(partitionReq.committedOffset())
+            .setCommitTime(partitionReq.commitTimestamp())
+          tlqRequest += (tp -> req)
+        }
+      }
+    }
+    tlqConsumer.commitOffset(tlqRequest.asJava).thenAccept(r => {
+      val result = Option(r).getOrElse(Map.empty.asJava)
+      tlqRequest.keySet.foreach(tp => {
+        if (result.containsKey(tp)) {
+          topicPartitionToErrors += (tp -> result.get(tp))
         } else {
           commitStatus += (tp -> Errors.NONE)
         }
-
-      }
-    }
-    sendResponseCallback(commitStatus.toMap)
-
+      })
+    }).exceptionally((e) => {
+      error(e.getMessage, e)
+      tlqRequest.keySet.foreach(tp => {
+        topicPartitionToErrors += (tp -> Errors.UNKNOWN_SERVER_ERROR)
+      })
+      null
+    }).thenRun(() => sendResponseCallback(commitStatus.toMap))
   }
 
 }

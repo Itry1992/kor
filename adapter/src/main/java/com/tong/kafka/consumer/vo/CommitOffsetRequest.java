@@ -33,7 +33,8 @@ public class CommitOffsetRequest {
         return commitTime;
     }
 
-    public void setCommitTime(long commitTime) {
+    public CommitOffsetRequest setCommitTime(long commitTime) {
         this.commitTime = commitTime;
+        return this;
     }
 }
