@@ -1,4 +1,4 @@
-package com.tong.kafka.produce;
+package com.tong.kafka.produce.vo;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -76,7 +76,7 @@ public class KafkaRecordAttr {
     public static KafkaRecordAttr formMap(Map<String, String> attr) {
         return new KafkaRecordAttr(INVALID_MAGIC)
                 .setMagic(Integer.parseInt(Optional.ofNullable(attr.get(MAGIC)).orElse(INVALID_MAGIC.toString())))
-                .setLength(Integer.parseInt(Optional.ofNullable(attr.get(CREATE_TIME)).orElse("0")))
+                .setLength(Integer.parseInt(Optional.ofNullable(attr.get(LENGTH)).orElse("0")))
                 .setCreateTime(Long.parseLong(Optional.ofNullable(attr.get(CREATE_TIME)).orElse("0")))
                 .setOffsetDelta(Long.parseLong(Optional.ofNullable(attr.get(OFFSET_DELTA)).orElse("0")));
     }

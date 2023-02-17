@@ -8,6 +8,7 @@ import com.tong.kafka.common.security.auth.SecurityProtocol
 import com.tong.kafka.common.security.scram.internals.ScramMechanism
 import com.tong.kafka.common.security.token.delegation.internals.DelegationTokenCache
 import com.tong.kafka.common.utils.{LogContext, Time}
+import com.tong.kafka.consumer.mock.MockConsumer
 import com.tong.kafka.manager.mock.MockManager
 import com.tong.kafka.produce.mock.MockProduce
 import com.tong.kafka.server.common.BrokerState
@@ -61,7 +62,17 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
       val tlqManager = new MockManager
       val topicManager = new HashTopicManager(config.getAdapterBroker)
       val tlqProduce = new MockProduce()
-      val apiHandler = new AdapterRequestHandler(socketServer.requestChannel, apiVersionManager, time, config, tlqManager, tlqProduce = tlqProduce, topicManager = topicManager)
+      val tlqConsumer = new MockConsumer(tlqProduce,tlqManager)
+      val apiHandler = new AdapterRequestHandler(
+        socketServer.requestChannel,
+        apiVersionManager,
+        time,
+        config,
+        tlqManager,
+        tlqProduce = tlqProduce,
+        topicManager = topicManager,
+        tlqConsumer = tlqConsumer
+      )
       requestHandlerPool = new KafkaRequestHandlerPool(brokerId = brokerId, requestChannel = socketServer.requestChannel, apis = apiHandler, time, numThreads = config.numIoThreads, requestHandlerAvgIdleMetricName = s"requestHandlerAvgIdleMetric", logAndThreadNamePrefix = s"${SampleAcceptor.ThreadPrefix}")
       socketServer.enableRequestProcessing()
       _brokerState = BrokerState.RUNNING

@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap
 trait AdapterTopicManager {
   def getLeaderNode(topic: TopicPartition): Node
 
-  def saveLeaderNode(topicPartition: TopicPartition, node: Node)
+  def saveLeaderNode(topicPartition: TopicPartition, node: Node): Unit
 }
 
 class HashTopicManager(val nodes: List[Node]) extends AdapterTopicManager {

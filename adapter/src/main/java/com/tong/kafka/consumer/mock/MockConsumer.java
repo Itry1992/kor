@@ -1,25 +1,42 @@
 package com.tong.kafka.consumer.mock;
 
 import com.tong.kafka.common.TopicPartition;
-import com.tong.kafka.consumer.*;
-import com.tong.kafka.manager.TlqBrokerNode;
+import com.tong.kafka.consumer.AbsTlqConsumer;
+import com.tong.kafka.consumer.ITlqConsumer;
+import com.tong.kafka.consumer.vo.CommitOffsetRequest;
+import com.tong.kafka.consumer.vo.ConsumerGroupOffsetData;
+import com.tong.kafka.consumer.vo.TlqOffsetRequest;
+import com.tong.kafka.consumer.vo.TopicPartitionOffsetData;
+import com.tong.kafka.manager.ITlqManager;
+import com.tong.kafka.manager.vo.TlqBrokerNode;
 import com.tong.kafka.produce.mock.MockProduce;
 import com.tongtech.client.message.MessageExt;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 public class MockConsumer extends AbsTlqConsumer implements ITlqConsumer {
     private MockProduce produce;
 
-    public MockConsumer(MockProduce produce) {
+    private Map<TopicPartition, Long> commitedOffsetMap = new ConcurrentHashMap<>();
+
+    public MockConsumer(MockProduce produce, ITlqManager manager) {
+        super(manager);
         this.produce = produce;
     }
 
     @Override
+    public CompletableFuture<ConsumerGroupOffsetData> getCommittedOffset(String groupId, List<TopicPartition> tps) {
+        HashMap<String, List<TopicPartition>> stringListHashMap = new HashMap<>();
+        stringListHashMap.put(groupId, tps);
+        return CompletableFuture.completedFuture(getCommittedOffset(stringListHashMap).get(groupId));
+    }
+
     public Map<String, ConsumerGroupOffsetData> getCommittedOffset(Map<String, List<TopicPartition>> groupMap) {
         List<ConsumerGroupOffsetData> offsetFetchResults = getOffsetFetchResults(groupMap);
         HashMap<String, ConsumerGroupOffsetData> res = new HashMap<>(offsetFetchResults.size());
@@ -41,7 +58,7 @@ public class MockConsumer extends AbsTlqConsumer implements ITlqConsumer {
             ConsumerGroupOffsetData committedOffset = new ConsumerGroupOffsetData(groupId);
             HashMap<TopicPartition, TopicPartitionOffsetData> topicPartitionLongHashMap = new HashMap<>();
             for (TopicPartition topicPartition : value) {
-                topicPartitionLongHashMap.put(topicPartition, new TopicPartitionOffsetData(topicPartition).setOffset(TopicPartitionOffsetData.INVALID_OFFSET));
+                topicPartitionLongHashMap.put(topicPartition, new TopicPartitionOffsetData(topicPartition).setOffset(Optional.ofNullable(commitedOffsetMap.get(topicPartition)).orElse(TopicPartitionOffsetData.INVALID_OFFSET)));
             }
             committedOffset.setTpToOffsetDataMap(topicPartitionLongHashMap);
             return committedOffset;
@@ -50,10 +67,21 @@ public class MockConsumer extends AbsTlqConsumer implements ITlqConsumer {
 
 
     @Override
-    public Map<TopicPartition, TopicPartitionOffsetData> getTimestampOffset(Map<TopicPartition, TlqOffsetRequest> requestMap) {
+    public CompletableFuture<HashMap<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, TlqOffsetRequest> requestMap) {
         HashMap<TopicPartition, TopicPartitionOffsetData> result = new HashMap<>();
-        requestMap.forEach((key, value) -> result.put(value.getTopicPartition(), new TopicPartitionOffsetData(key)));
-        return result;
+        requestMap.forEach((key, value) -> {
+            TopicPartitionOffsetData offsetData = new TopicPartitionOffsetData(key);
+            result.put(value.getTopicPartition(), offsetData);
+        });
+        return CompletableFuture.completedFuture(result);
+    }
+
+    @Override
+    public CompletableFuture<Void> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap) {
+        offsetMap.forEach((key, value) -> {
+            commitedOffsetMap.put(key, value.getCommitOffset());
+        });
+        return CompletableFuture.completedFuture(null);
     }
 
 

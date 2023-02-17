@@ -1,4 +1,4 @@
-package com.tong.kafka.manager;
+package com.tong.kafka.manager.vo;
 
 public class TlqBrokerNode {
     private String port;

@@ -1,4 +1,4 @@
-package com.tong.kafka.produce;
+package com.tong.kafka.produce.vo;
 
 public class SendResult {
     /**
@@ -10,7 +10,7 @@ public class SendResult {
      */
     private long logAppendTime;
     /**
-     * 对应kafka 分段文件其实时间，暂时全部为0
+     * 对应kafka 分段文件起始offset，暂时全部为0
      */
     private long logStartOffset;
 

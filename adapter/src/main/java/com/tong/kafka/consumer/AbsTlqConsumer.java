@@ -6,8 +6,8 @@ import com.tong.kafka.common.header.internals.RecordHeader;
 import com.tong.kafka.common.protocol.ByteBufferAccessor;
 import com.tong.kafka.common.record.*;
 import com.tong.kafka.manager.ITlqManager;
-import com.tong.kafka.manager.TlqBrokerNode;
-import com.tong.kafka.produce.KafkaRecordAttr;
+import com.tong.kafka.manager.vo.TlqBrokerNode;
+import com.tong.kafka.produce.vo.KafkaRecordAttr;
 import com.tongtech.client.message.Message;
 import com.tongtech.client.message.MessageExt;
 
@@ -15,19 +15,27 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public abstract class AbsTlqConsumer implements ITlqConsumer {
     private volatile long EXPECTED_REQUEST_CONSUMPTION_TIME = 3;
-    ITlqManager manager;
+    protected ITlqManager manager;
+
+    public AbsTlqConsumer(ITlqManager manager) {
+        this.manager = manager;
+    }
 
     public CompletableFuture<MemoryRecords> pullMessage(TopicPartition topicPartition, long offset, int maxWaitTime, int batchNum, int maxByte, int minByte) {
-        TlqBrokerNode node = manager.getTlqBrokerNode(topicPartition);
+        Optional<TlqBrokerNode> node = manager.getTlqBrokerNode(topicPartition);
+        if (node.isPresent()) {
 //        CompletableFuture<List<MessageExt>> pullMessage = pullMessage(node, offset, maxWaitTime, topicPartition.topic(), batchNum);
 //        return pullMessage.thenApply(messages -> messageToMemoryRecords(messages, maxByte));
-        return pullMessageChain(node, topicPartition.topic(), offset, maxWaitTime, batchNum, maxByte, minByte, new ArrayList<>(batchNum), System.currentTimeMillis());
+            return pullMessageChain(node.get(), topicPartition.topic(), offset, maxWaitTime, batchNum, maxByte, minByte, new ArrayList<>(batchNum), System.currentTimeMillis());
+        }
+        return CompletableFuture.completedFuture(MemoryRecords.EMPTY);
     }
 
     /**
@@ -46,7 +54,7 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
      */
     public CompletableFuture<MemoryRecords> pullMessageChain(TlqBrokerNode node, String topic, long offset, int maxWaitTime, int batchNum, int maxBate, int minByte, List<MessageExt> lastMessages, long beginTimes) {
         CompletableFuture<List<MessageExt>> pullMessageResult = pullMessage(node, offset, maxWaitTime, topic, batchNum);
-        CompletableFutureUtil.completeTimeOut(pullMessageResult, Collections.emptyList(), maxWaitTime, TimeUnit.MILLISECONDS);
+        CompletableFutureUtil.completeTimeOut(pullMessageResult, Collections.emptyList(), maxWaitTime + (int) EXPECTED_REQUEST_CONSUMPTION_TIME, TimeUnit.MILLISECONDS);
         return pullMessageResult.thenCompose(messages -> {
             if (messages.isEmpty()) return CompletableFuture.completedFuture(MemoryRecords.EMPTY);
             MessageExt last = messages.get(messages.size() - 1);
@@ -78,7 +86,7 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
         SimpleRecord headRecord = messageToSimpleRecord(headMessage);
         int size = Math.max(maxByte, AbstractRecords.estimateSizeInBytesUpperBound(RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, headRecord.key(), headRecord.value(), headRecord.headers()));
         ByteBuffer buffer = ByteBuffer.allocate(size);
-        MemoryRecordsBuilder builder = MemoryRecords.builder(buffer, RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, TimestampType.LOG_APPEND_TIME, baseOffset, headMessage.getTime(), 0L, (short) RecordBatch.NO_PARTITION_LEADER_EPOCH, 0, false, false, RecordBatch.NO_PARTITION_LEADER_EPOCH);
+        MemoryRecordsBuilder builder = MemoryRecords.builder(buffer, RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, TimestampType.LOG_APPEND_TIME, baseOffset, headMessage.getTime(), RecordBatch.NO_PRODUCER_ID, (short) RecordBatch.NO_PARTITION_LEADER_EPOCH, 0, false, false, RecordBatch.NO_PARTITION_LEADER_EPOCH);
 
         for (MessageExt message : messages) {
             SimpleRecord record = messageToSimpleRecord(headMessage);
@@ -104,10 +112,10 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
         for (int i = 0; i < headerCount; i++) {
             int headerKeySize = bufferAccessor.readVarint();
             ByteBuffer headerKey = bufferAccessor.readByteBuffer(headerKeySize);
-            int vauleSize = bufferAccessor.readVarint();
-            ByteBuffer headerValue = bufferAccessor.readByteBuffer(valueSize);
+            int headerValueSize = bufferAccessor.readVarint();
+            ByteBuffer headerValue = bufferAccessor.readByteBuffer(headerValueSize);
 
-            recordHeaders[i] = new RecordHeader(headerKey, vauleSize == 0 ? null : headerValue);
+            recordHeaders[i] = new RecordHeader(headerKey, headerValue);
         }
         return new SimpleRecord(0, key, value, recordHeaders);
     }

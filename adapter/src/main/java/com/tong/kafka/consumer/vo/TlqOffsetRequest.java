@@ -1,4 +1,4 @@
-package com.tong.kafka.consumer;
+package com.tong.kafka.consumer.vo;
 
 import com.tong.kafka.common.TopicPartition;
 
@@ -45,6 +45,10 @@ public class TlqOffsetRequest {
 
     public long getTimestamp() {
         return timestamp;
+    }
+
+    public Type getType() {
+        return type;
     }
 
     public void setTimestamp(long timestamp) {

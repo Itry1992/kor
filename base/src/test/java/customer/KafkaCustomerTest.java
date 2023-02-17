@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class KafkaCustomerTest {
     private static KafkaConsumer<String, String> consumer;
-    private static String topic = "TOPIC_TEST";
+    private static String topic = "topic_test0";
 
     static {
         consumer = initCustomer();
@@ -56,7 +56,7 @@ public class KafkaCustomerTest {
 //                } else {
 //                    consumer.commitSync(Collections.singletonMap(new TopicPartition("TOPIC_TEST",0),new OffsetAndMetadata(0)));
 //                }
-                Thread.sleep(1000);
+                Thread.sleep(5000);
 
             }
 

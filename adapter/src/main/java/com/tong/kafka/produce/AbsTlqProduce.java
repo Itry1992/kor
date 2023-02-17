@@ -6,26 +6,21 @@ import com.tong.kafka.common.header.internals.RecordHeader;
 import com.tong.kafka.common.record.Record;
 import com.tong.kafka.common.utils.ByteUtils;
 import com.tong.kafka.manager.ITlqManager;
-import com.tong.kafka.manager.TlqBrokerNode;
-import com.tong.kafka.manager.TopicMetaData;
+import com.tong.kafka.produce.vo.KafkaRecordAttr;
 import com.tongtech.client.message.Message;
 
-import java.nio.Buffer;
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Collectors;
 
 public abstract class AbsTlqProduce implements ITlqProduce {
 
-    private ITlqManager manager;
+    protected ITlqManager manager;
 
     public AbsTlqProduce(ITlqManager manager) {
         this.manager = manager;
-    }
-
-    public TlqBrokerNode getTlqBroker(TopicPartition topicPartition) {
-        Map<String, TopicMetaData> topicMetaData = manager.getTopicMetaData(Collections.singletonList(topicPartition.topic()));
-        return topicMetaData.get(topicPartition.topic()).getBind().get(topicPartition.partition());
     }
 
 
@@ -58,9 +53,12 @@ public abstract class AbsTlqProduce implements ITlqProduce {
         dataLength += ByteUtils.sizeOfVarint(record.headers().length);
         for (Header h1 : record.headers()) {
             RecordHeader header = (RecordHeader) h1;
-            dataLength += ByteUtils.sizeOfVarint(header.getKeyBuffer().remaining());
-            dataLength += ByteUtils.sizeOfVarint(Optional.ofNullable(header.getValueBuffer()).map(Buffer::remaining).orElse(0));
-            dataLength += header.getKeyBuffer().remaining() + Optional.ofNullable(header.getValueBuffer()).map(r -> r.remaining()).orElse(0);
+            String headerKey = header.key();
+            byte[] value = header.value();
+            byte[] headerByte = headerKey.getBytes(StandardCharsets.UTF_8);
+            dataLength += ByteUtils.sizeOfVarint(headerByte.length);
+            dataLength += ByteUtils.sizeOfVarint(value.length);
+            dataLength += headerByte.length + value.length;
         }
 
         //key_length ->
@@ -81,15 +79,13 @@ public abstract class AbsTlqProduce implements ITlqProduce {
         ByteUtils.writeVarint(record.headers().length, buffer);
         Arrays.stream(record.headers()).forEach(h -> {
             RecordHeader header = (RecordHeader) h;
-            ByteUtils.writeVarint(header.getKeyBuffer().remaining(), buffer);
-            buffer.put(header.getKeyBuffer().slice());
-            ByteBuffer headerValue = header.getValueBuffer();
-            if (headerValue != null) {
-                ByteUtils.writeVarint(headerValue.remaining(), buffer);
-                buffer.put(header.getValueBuffer().slice());
-            } else {
-                ByteUtils.writeVarint(0, buffer);
-            }
+            String headerKey = header.key();
+            byte[] keyBytes = headerKey.getBytes(StandardCharsets.UTF_8);
+            byte[] value = header.value();
+            ByteUtils.writeVarint(keyBytes.length,buffer);
+            buffer.put(keyBytes);
+            ByteUtils.writeVarint(value.length,buffer);
+            buffer.put(value);
         });
         return bytes;
     }

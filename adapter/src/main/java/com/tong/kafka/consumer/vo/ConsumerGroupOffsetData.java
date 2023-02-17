@@ -1,4 +1,4 @@
-package com.tong.kafka.consumer;
+package com.tong.kafka.consumer.vo;
 
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.protocol.Errors;

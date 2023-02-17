@@ -1,10 +1,18 @@
 package com.tong.kafka.manager;
 
 import com.tong.kafka.common.TopicPartition;
+import com.tong.kafka.manager.vo.TlqBrokerNode;
+import com.tong.kafka.manager.vo.TopicMetaData;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
+/**
+ * 获取主题分区绑定数据，尽可能从缓存中获取
+ * kafka的思路是，如果有不存在的主题分区，则异步拉取后更新缓存，且会定时更新
+ */
 public interface ITlqManager {
     /**
      * 获取主题的分区元数据
@@ -12,14 +20,37 @@ public interface ITlqManager {
      * @param topicName
      * @return key: topicName;value: 绑定的分区信息
      */
-    Map<String,TopicMetaData> getTopicMetaData(List<String> topicName);
+    CompletableFuture<Map<String, TopicMetaData>> getTopicMetaData(List<String> topicName);
 
-    Map<String,TopicMetaData> getAllTopicMetaData();
+    /**
+     * 获取全部主题的分区元数据
+     *
+     * @return
+     */
+    CompletableFuture<Map<String, TopicMetaData>> getAllTopicMetaData();
 
-    TlqBrokerNode getTlqBrokerNode(TopicPartition topicPartition);
+    /**
+     * 获取分区对应的broker,应当为非阻塞方法
+     *
+     * @param topicPartition
+     * @return
+     */
+    Optional<TlqBrokerNode> getTlqBrokerNode(TopicPartition topicPartition);
 
+    /**
+     * 判断是否包含改分区，应当为非阻塞方法，尽可能冲缓存获取。
+     *
+     * @param topicName
+     * @return
+     */
     boolean hasTopic(String topicName);
 
+    /**
+     * 判断是否包含改分区，尽可能冲缓存获取。
+     *
+     * @param tp
+     * @return
+     */
     boolean hasTopicPartition(TopicPartition tp);
 
 

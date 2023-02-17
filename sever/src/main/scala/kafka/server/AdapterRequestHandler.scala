@@ -16,10 +16,13 @@ import com.tong.kafka.common.requests.ProduceResponse.PartitionResponse
 import com.tong.kafka.common.requests._
 import com.tong.kafka.common.utils.{BufferSupplier, Time}
 import com.tong.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
-import com.tong.kafka.consumer.{ITlqConsumer, TlqOffsetRequest, TopicPartitionOffsetData}
+import com.tong.kafka.consumer.ITlqConsumer
+import com.tong.kafka.consumer.vo.{TlqOffsetRequest, TopicPartitionOffsetData}
 import com.tong.kafka.manager.ITlqManager
+import com.tong.kafka.manager.vo.TopicMetaData
+import com.tong.kafka.produce.ITlqProduce
 import com.tong.kafka.produce.exception.MessageTooLagerException
-import com.tong.kafka.produce.{ITlqProduce, KafkaRecordAttr}
+import com.tong.kafka.produce.vo.KafkaRecordAttr
 import com.tong.kafka.server.common.MetadataVersion
 import kafka.network.RequestChannel
 import kafka.utils.Implicits.MapExtensionMethods
@@ -61,6 +64,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         // before handing them to the request handler, so this path should not be exercised in practice
         throw new IllegalStateException(s"API ${request.header.apiKey} is not enabled")
       }
+      trace(s"accept request from client: ${request.header.clientId()} correlationId : ${request.header.correlationId()}, APIKEY:${request.header.apiKey()}")
       request.header.apiKey match {
         case ApiKeys.API_VERSIONS => handleApiVersionsRequest(request)
         case ApiKeys.METADATA => handleMetadataRequest(request)
@@ -75,7 +79,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         case ApiKeys.FETCH => handleFetchRequest(request)
         case ApiKeys.OFFSET_COMMIT => handleOffsetCommitRequest(request, requestLocal)
         case ApiKeys.LEAVE_GROUP => handleLeaveGroupRequest(request)
-        case _ => trace(s"Some API key not be handler apiKey: ${request.header.apiKey}")
+        case _ => error(s"Some API key not be handler apiKey: ${request.header.apiKey}")
       }
     } catch {
       case e: FatalExitError => throw e
@@ -181,10 +185,11 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
               val attr = new KafkaRecordAttr(batch.magic())
               try {
                 Option(tlqProduce.sendBatch(topicPartition, r.asJava, attr)
-                  .whenComplete((sendRes, error) => {
-                    if (error != null) {
+                  .whenComplete((sendRes, throwable) => {
+                    if (throwable != null) {
+                      error(throwable.getMessage, throwable)
                       responseStatus += (topicPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR,
-                        error.getMessage))
+                        throwable.getMessage))
                     }
                     else {
                       responseStatus += (topicPartition -> new PartitionResponse(Errors.NONE, sendRes.getOffset, sendRes.getLogAppendTime, sendRes.getLogStartOffset))
@@ -308,55 +313,82 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         }
       }
     }
-    var topics = metadataRequest.topics()
-    if (isAllTopic)
-      topics = tlqManager.getAllTopicMetaData.values().stream().map(r => r.getTopicName).collect(Collectors.toList())
+
+    val topicsFuture: CompletableFuture[util.List[String]] = if (isAllTopic) {
+      tlqManager.getAllTopicMetaData
+        .thenApply(metaData => {
+          metaData.keySet().stream().collect(Collectors.toList())
+        })
+    } else {
+      CompletableFuture.completedFuture(metadataRequest.topics())
+    }
     val brokers = config.getAdapterBroker
     //COMPACT_NULLABLE_STRING
     val clusterId = null
     //INT32
     val controllerId = 0
-    val topicsMetaData = getMetaDataTopicPartition(topics.asScala.toList)
-
     val clusterAuthorizedOperations = Int.MinValue // Default value in the schema
-    val response = MetadataResponse.prepareResponse(
-      requestVersion,
-      0,
-      brokers.asJava,
-      clusterId,
-      controllerId,
-      topicsMetaData.map(t => t._2).asJava,
-      clusterAuthorizedOperations
-    )
-    requestChannel.sendResponse(request, response, None)
+    topicsFuture.thenCompose(topics => {
+      val topicsMetaDataFuture = getMetaDataTopicPartition(topics.asScala.toList)
+      topicsMetaDataFuture.thenCompose(topicsMetaData => {
+        val response = MetadataResponse.prepareResponse(
+          requestVersion,
+          0,
+          brokers.asJava,
+          clusterId,
+          controllerId,
+          topicsMetaData.map(t => t._2).asJava,
+          clusterAuthorizedOperations
+        )
+        requestChannel.sendResponse(request, response, None)
+        CompletableFuture.completedFuture(null)
+      })
+    }).exceptionally(e => {
+      error(e.getMessage, e)
+      val response = MetadataResponse.prepareResponse(
+        requestVersion,
+        0,
+        brokers.asJava,
+        clusterId,
+        controllerId,
+        Collections.emptyList(),
+        clusterAuthorizedOperations
+      )
+      requestChannel.sendResponse(request, response, None)
+      null
+    })
+
   }
 
-  private def getMetaDataTopicPartition(topics: List[String]): List[(String, MetadataResponseTopic)] = {
-    val topicMap = this.tlqManager.getTopicMetaData(topics.asJava)
-    topics.map(topic => {
-      val topicMetaData = Option(topicMap.get(topic))
-      val responseTopic = topicMetaData.map(r =>
-        metadataResponseTopic(Errors.NONE, topic, Uuid.ZERO_UUID,
-          r.getBind.asScala.map(
-            bind => {
-              val partitionIndex = bind._1
-              val nodeIds = r.getBind.keySet().asScala.toList.asJava
-              new MetadataResponsePartition()
-                .setErrorCode(Errors.NONE.code())
-                .setPartitionIndex(partitionIndex)
-                .setLeaderId(topicManager.getLeaderNode(new TopicPartition(topic, partitionIndex)).id())
-                .setLeaderEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH)
-                //分片和leader节点id，
-                .setReplicaNodes(nodeIds)
-                //以同步的节点Id
-                .setIsrNodes(nodeIds)
-                .setOfflineReplicas(List[Integer]().asJava)
-            }
-          ).toList.asJava)
-      )
-        .getOrElse(metadataResponseTopic(Errors.INVALID_TOPIC_EXCEPTION, topic, Uuid.ZERO_UUID, util.Collections.emptyList()))
-      topic -> responseTopic
+  private def getMetaDataTopicPartition(topics: List[String]): CompletableFuture[List[(String, MetadataResponseTopic)]] = {
+    val topicMapFuture: CompletableFuture[util.Map[String, TopicMetaData]] = this.tlqManager.getTopicMetaData(topics.asJava)
+    topicMapFuture.thenApply(topicMap => {
+      topics.map(topic => {
+        val topicMetaData = Option(topicMap.get(topic))
+        val responseTopic = topicMetaData.map(r =>
+          metadataResponseTopic(Errors.NONE, topic, Uuid.ZERO_UUID,
+            r.getBind.asScala.map(
+              bind => {
+                val partitionIndex = bind._1
+                val nodeIds = r.getBind.keySet().asScala.toList.asJava
+                new MetadataResponsePartition()
+                  .setErrorCode(Errors.NONE.code())
+                  .setPartitionIndex(partitionIndex)
+                  .setLeaderId(topicManager.getLeaderNode(new TopicPartition(topic, partitionIndex)).id())
+                  .setLeaderEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH)
+                  //分片和leader节点id，
+                  .setReplicaNodes(nodeIds)
+                  //以同步的节点Id
+                  .setIsrNodes(nodeIds)
+                  .setOfflineReplicas(List[Integer]().asJava)
+              }
+            ).toList.asJava)
+        )
+          .getOrElse(metadataResponseTopic(Errors.INVALID_TOPIC_EXCEPTION, topic, Uuid.ZERO_UUID, util.Collections.emptyList()))
+        topic -> responseTopic
+      })
     })
+
   }
 
   private def metadataResponseTopic(error: Errors,
@@ -378,7 +410,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
 
     val responseData = new InitProducerIdResponseData()
       .setProducerId(1)
-      .setProducerEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH.toShort)
+      .setProducerEpoch(0)
       .setThrottleTimeMs(0)
       .setErrorCode(Errors.NONE.code())
     val responseBody = new InitProducerIdResponse(responseData)
@@ -490,36 +522,65 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     requestChannel.sendResponse(request, syncGroupResponse, None)
   }
 
+
   def handleOffsetFetchRequest(request: RequestChannel.Request): Unit = {
+    //max version 7
     val header = request.header
     val offsetFetchRequest = request.body[OffsetFetchRequest]
-    val groupIds: mutable.Buffer[String] = offsetFetchRequest.groupIds().asScala
-    val groupToTopicPartitions: mutable.Map[String, util.List[TopicPartition]] = offsetFetchRequest.groupIdsToPartitions().asScala
-    //响应数据
-    val groupToErrorMap = mutable.Map.empty[String, Errors]
-    val groupToPartitionData = mutable.Map.empty[String, util.Map[TopicPartition, OffsetFetchResponse.PartitionData]]
-
-    val committedOffsetMap = tlqConsumer.getCommittedOffset(groupToTopicPartitions.asJava)
-    committedOffsetMap.forEach((groupId, groupData) => {
-      if (Option(groupData.getError).getOrElse(Errors.NONE) != Errors.NONE) {
-        groupToErrorMap += (groupId -> groupData.getError)
-      }
-      val groupMap = mutable.Map.empty[TopicPartition, OffsetFetchResponse.PartitionData]
-      val tpOffsetData = groupData.getTpToOffsetDataMap
-      tpOffsetData.forEach((tp, offsetData) => {
-        if (Option(offsetData.getError).getOrElse(Errors.NONE) != Errors.NONE) {
-          val partitionData = new OffsetFetchResponse.PartitionData(-1, Optional.ofNullable(0), "", offsetData.getError)
-          groupMap += (tp, partitionData)
+    val groupId = offsetFetchRequest.groupId()
+    val partitionsFuture: CompletableFuture[util.List[TopicPartition]] = if (offsetFetchRequest.isAllPartitions) {
+      tlqManager.getAllTopicMetaData.thenApply(metadata => {
+        val topicPartitions: mutable.ArrayBuffer[TopicPartition] = mutable.ArrayBuffer.empty
+        metadata.asScala.foreach {
+          case (topic, topicMetaData: TopicMetaData) =>
+            topicMetaData.getBind.keySet().forEach(k => {
+              topicPartitions += new TopicPartition(topic, k)
+            })
         }
-        else {
-          val partitionData = new OffsetFetchResponse.PartitionData(offsetData.getOffset, Optional.ofNullable(0), "", Errors.NONE)
-          groupMap += (tp, partitionData)
-        }
+        topicPartitions.asJava
       })
+    } else {
+      CompletableFuture.completedFuture(offsetFetchRequest.partitions)
+    }
+
+    def createResponse(requestThrottleMs: Int, error: Errors, partitionData: Map[TopicPartition, OffsetFetchResponse.PartitionData]): AbstractResponse = {
+      val offsetFetchResponse =
+        if (error != Errors.NONE) {
+          offsetFetchRequest.getErrorResponse(requestThrottleMs, error)
+        } else {
+          new OffsetFetchResponse(requestThrottleMs, Errors.NONE, partitionData.asJava)
+        }
+      trace(s"Sending offset fetch response $offsetFetchResponse for correlation id ${header.correlationId} to client ${header.clientId}.")
+      offsetFetchResponse
+    }
+
+    partitionsFuture.thenCompose(partitions => {
+      val committedOffsetMapFuture = tlqConsumer.getCommittedOffset(groupId, partitions)
+      committedOffsetMapFuture.thenAccept(groupData => {
+        var response = if (Option(groupData.getError).getOrElse(Errors.NONE) != Errors.NONE) {
+          createResponse(0, groupData.getError, Map.empty)
+        } else {
+          val resultMap = mutable.Map.empty[TopicPartition, OffsetFetchResponse.PartitionData]
+          val tpOffsetData = groupData.getTpToOffsetDataMap
+          tpOffsetData.forEach((tp, offsetData) => {
+            if (Option(offsetData.getError).getOrElse(Errors.NONE) != Errors.NONE) {
+              val partitionData = new OffsetFetchResponse.PartitionData(-1, Optional.ofNullable(0), "", offsetData.getError)
+              resultMap += (tp -> partitionData)
+            }
+            else {
+              val partitionData = new OffsetFetchResponse.PartitionData(offsetData.getOffset, Optional.ofNullable(0), "", Errors.NONE)
+              resultMap += (tp -> partitionData)
+            }
+          })
+          createResponse(0, Errors.NONE, resultMap.toMap)
+        }
+        requestChannel.sendResponse(request, response, None)
+      })
+    }).exceptionally(err => {
+      error(err.getMessage, err)
+      requestChannel.sendResponse(request, createResponse(0, Errors.UNKNOWN_SERVER_ERROR, Map.empty), None)
+      null
     })
-    val offsetFetchResponse = new OffsetFetchResponse(0,
-      groupToErrorMap.asJava, groupToPartitionData.asJava)
-    requestChannel.sendResponse(request, offsetFetchResponse, None)
   }
 
 
@@ -581,38 +642,56 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         tlqRequest += (tp -> offsetRequest)
       })
     })
-    val partitionToOffsetData = tlqConsumer.getTimestampOffset(tlqRequest.asJava)
-
-    val topics = offsetRequest.data().topics().asScala.map(offsetsTopic => {
-      val partitionResponse = offsetsTopic.partitions().asScala.map(partition => {
-        val tp = new TopicPartition(offsetsTopic.name(), partition.partitionIndex())
-        val result: TopicPartitionOffsetData = partitionToOffsetData.get(tp)
-        val response = if (result.getError != Errors.NONE) {
-          getErrorListOffsetsPartitionResponse(result.getError, tp.partition())
-        } else {
-          val response = new ListOffsetsResponseData.ListOffsetsPartitionResponse()
-            .setErrorCode(Errors.NONE.code())
-            .setPartitionIndex(partition.partitionIndex())
-            .setLeaderEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH)
-          if (useOldStyleOffset) {
-            val maxNumOffsets = partition.maxNumOffsets()
-            //v0老版本会返回之前的分段offset,根据Segments分段
-            response.setOldStyleOffsets(List[lang.Long](result.getOffset).asJava)
+    val partitionToOffsetDataFuture = tlqConsumer.getTimestampOffset(tlqRequest.asJava)
+    //错误处理
+    partitionToOffsetDataFuture.exceptionally(err => {
+      error(err.getMessage, err)
+      val topics = offsetRequest.data().topics().asScala.map(offsetTopic => {
+        val partitionResponse = offsetTopic.partitions().asScala.map(partition => {
+          getErrorListOffsetsPartitionResponse(Errors.UNKNOWN_SERVER_ERROR, partition.partitionIndex())
+        })
+        new ListOffsetsTopicResponse().setName(offsetTopic.name())
+          .setPartitions(partitionResponse.asJava)
+      })
+      val response = new ListOffsetsResponse(new ListOffsetsResponseData()
+        .setThrottleTimeMs(0)
+        .setTopics(topics.asJava))
+      requestChannel.sendResponse(request, response, None)
+      null
+    })
+    partitionToOffsetDataFuture.thenApply(partitionToOffsetData => {
+      val topics = offsetRequest.data().topics().asScala.map(offsetsTopic => {
+        val partitionResponse = offsetsTopic.partitions().asScala.map(partition => {
+          val tp = new TopicPartition(offsetsTopic.name(), partition.partitionIndex())
+          val result: TopicPartitionOffsetData = partitionToOffsetData.get(tp)
+          val response = if (result.getError != Errors.NONE) {
+            getErrorListOffsetsPartitionResponse(result.getError, tp.partition())
           } else {
-            response.setOffset(result.getOffset)
+            val response = new ListOffsetsResponseData.ListOffsetsPartitionResponse()
+              .setErrorCode(Errors.NONE.code())
+              .setPartitionIndex(partition.partitionIndex())
+              .setLeaderEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH)
+            if (useOldStyleOffset) {
+              val maxNumOffsets = partition.maxNumOffsets()
+              //v0老版本会返回之前的分段offset,根据Segments分段
+              response.setOldStyleOffsets(List[lang.Long](result.getOffset).asJava)
+            } else {
+              response.setOffset(result.getOffset)
+            }
+            response
           }
           response
-        }
-        response
+        })
+        new ListOffsetsTopicResponse().setName(offsetsTopic.name())
+          .setPartitions(partitionResponse.asJava)
       })
-      new ListOffsetsTopicResponse().setName(offsetsTopic.name())
-        .setPartitions(partitionResponse.asJava)
+
+      val response = new ListOffsetsResponse(new ListOffsetsResponseData()
+        .setThrottleTimeMs(0)
+        .setTopics(topics.asJava))
+      requestChannel.sendResponse(request, response, None)
     })
 
-    val response = new ListOffsetsResponse(new ListOffsetsResponseData()
-      .setThrottleTimeMs(0)
-      .setTopics(topics.asJava))
-    requestChannel.sendResponse(request, response, None)
   }
 
 
@@ -825,45 +904,61 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       val futures = interesting.map {
         case (topicIdPartition: TopicIdPartition, partitionData) =>
           val tp = new TopicPartition(topicIdPartition.topic(), topicIdPartition.partition())
-          val future: CompletableFuture[MemoryRecords] = tlqConsumer.pullMessage(tp, partitionData.fetchOffset, params.maxWaitMs.toInt, config.getHtpPullBatchMums, params.maxBytes, params.minBytes)
-          future.whenComplete((record, error) => {
-            val fetchPartitionData = if (error != null) {
-              //Errors.NOT_LEADER_OR_FOLLOWER ||
-              //              error == Errors.REPLICA_NOT_AVAILABLE ||
-              //                error == Errors.KAFKA_STORAGE_ERROR ||
-              //                error == Errors.FENCED_LEADER_EPOCH ||
-              //                error == Errors.OFFSET_NOT_AVAILABLE
-              //UNKNOWN_TOPIC_OR_PARTITION
-              //UNKNOWN_TOPIC_ID
-              //INCONSISTENT_TOPIC_ID
-              //以上8个错误，客户端会重新跟新metadata
-              //OFFSET_OUT_OF_RANGE , 会重新查询offset
-              //              UNKNOWN_SERVER_ERROR,记录error的信息
-              //CORRUPT_MESSAGE->kafka expection
-              FetchPartitionData(error =
-                Errors.UNKNOWN_SERVER_ERROR,
-                highWatermark = 0,
-                logStartOffset = 0,
-                records = MemoryRecords.EMPTY,
-                divergingEpoch = None,
-                lastStableOffset = None,
-                abortedTransactions = None,
-                preferredReadReplica = None,
-                isReassignmentFetch = false)
-            } else {
-              FetchPartitionData(
-                highWatermark = Long.MaxValue,
-                logStartOffset = 0,
-                records = record,
-                divergingEpoch = None,
-                lastStableOffset = None,
-                abortedTransactions = None,
-                preferredReadReplica = None,
-                isReassignmentFetch = false)
-            }
+          if (tlqManager.hasTopicPartition(tp)) {
+            val future: CompletableFuture[MemoryRecords] = tlqConsumer.pullMessage(tp, partitionData.fetchOffset, params.maxWaitMs.toInt, config.getHtpPullBatchMums, params.maxBytes, params.minBytes)
+            future.whenComplete((record, throwable) => {
+              val fetchPartitionData = if (throwable != null) {
+                error(throwable.getMessage,throwable)
+                //Errors.NOT_LEADER_OR_FOLLOWER ||
+                //              error == Errors.REPLICA_NOT_AVAILABLE ||
+                //                error == Errors.KAFKA_STORAGE_ERROR ||
+                //                error == Errors.FENCED_LEADER_EPOCH ||
+                //                error == Errors.OFFSET_NOT_AVAILABLE
+                //UNKNOWN_TOPIC_OR_PARTITION
+                //UNKNOWN_TOPIC_ID
+                //INCONSISTENT_TOPIC_ID
+                //以上8个错误，客户端会重新跟新metadata
+                //OFFSET_OUT_OF_RANGE , 会重新查询offset
+                //              UNKNOWN_SERVER_ERROR,记录error的信息
+                //CORRUPT_MESSAGE->kafka expection
+                FetchPartitionData(error =
+                  Errors.UNKNOWN_SERVER_ERROR,
+                  highWatermark = 0,
+                  logStartOffset = 0,
+                  records = MemoryRecords.EMPTY,
+                  divergingEpoch = None,
+                  lastStableOffset = None,
+                  abortedTransactions = None,
+                  preferredReadReplica = None,
+                  isReassignmentFetch = false)
+              } else {
+                FetchPartitionData(
+                  highWatermark = Long.MaxValue,
+                  logStartOffset = 0,
+                  records = record,
+                  divergingEpoch = None,
+                  lastStableOffset = None,
+                  abortedTransactions = None,
+                  preferredReadReplica = None,
+                  isReassignmentFetch = false)
+              }
+              result += (topicIdPartition -> fetchPartitionData)
+            })
+            future
+          } else {
+            val fetchPartitionData = FetchPartitionData(error =
+              Errors.UNKNOWN_TOPIC_OR_PARTITION,
+              highWatermark = 0,
+              logStartOffset = 0,
+              records = MemoryRecords.EMPTY,
+              divergingEpoch = None,
+              lastStableOffset = None,
+              abortedTransactions = None,
+              preferredReadReplica = None,
+              isReassignmentFetch = false)
             result += (topicIdPartition -> fetchPartitionData)
-          })
-          future
+            CompletableFuture.completedFuture(MemoryRecords.EMPTY)
+          }
       }
       CompletableFuture.allOf(futures.toSeq: _*)
         .thenRun(() => processResponseCallback(result.toList))

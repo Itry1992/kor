@@ -1,6 +1,6 @@
 package com.tong.kafka.manager.mock;
 
-import com.tong.kafka.manager.TlqBrokerNode;
+import com.tong.kafka.manager.vo.TlqBrokerNode;
 
 import java.util.*;
 import java.util.stream.Collectors;
