@@ -26,6 +26,7 @@ import com.tong.kafka.produce.vo.KafkaRecordAttr
 import com.tong.kafka.server.common.MetadataVersion
 import kafka.group.{GroupCoordinator, JoinGroupResult, LeaveGroupResult, SyncGroupResult}
 import kafka.network.RequestChannel
+import kafka.quota.QuotaFactory.QuotaManagers
 import kafka.utils.Implicits.MapExtensionMethods
 import kafka.utils.Logging
 
@@ -44,6 +45,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
                             topicManager: AdapterTopicManager,
                             tlqProduce: ITlqProduce,
                             tlqConsumer: ITlqConsumer,
+                            val quotas: QuotaManagers,
                             val groupCoordinator: GroupCoordinator,
                            ) extends ApiRequestHandler with Logging {
   private val decompressionBufferSupplier = BufferSupplier.create
@@ -55,6 +57,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
   //对应kafka配置项：message.format.version，3.0默认值：IBP_3_0_IV1
   //用于老版本消息格式兼容
   val messageFormatVersion: MetadataVersion = MetadataVersion.fromVersionString(MetadataVersion.IBP_3_0_IV1.version)
+  val requestHelper = new RequestHandlerHelper(requestChannel, quotas, time)
 
   override def handle(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
     trace(s"Handling request:${request.requestDesc(true)} from connection ${request.context.connectionId};" +
@@ -148,7 +151,19 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       // have been violated. If both quotas have been violated, use the max throttle time between the two quotas. Note
       // that the request quota is not enforced if acks == 0.
       val timeMs = time.milliseconds()
-
+      val bandwidthThrottleTimeMs = quotas.produce.maybeRecordAndGetThrottleTimeMs(request, requestSize, timeMs)
+      val requestThrottleTimeMs =
+        if (produceRequest.acks == 0) 0
+        else quotas.request.maybeRecordAndGetThrottleTimeMs(request, timeMs)
+      val maxThrottleTimeMs = Math.max(bandwidthThrottleTimeMs, requestThrottleTimeMs)
+      if (maxThrottleTimeMs > 0) {
+        request.apiThrottleTimeMs = maxThrottleTimeMs
+        if (bandwidthThrottleTimeMs > requestThrottleTimeMs) {
+          requestHelper.throttle(quotas.produce, request, bandwidthThrottleTimeMs)
+        } else {
+          requestHelper.throttle(quotas.request, request, requestThrottleTimeMs)
+        }
+      }
 
       // Send the response immediately. In case of throttling, the channel has already been muted.
       if (produceRequest.acks == 0) {
@@ -166,10 +181,12 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
           )
           requestChannel.closeConnection(request, new ProduceResponse(mergedResponseStatus.asJava).errorCounts)
         } else {
-          requestChannel.sendNoOpResponse(request)
+          // Note that although request throttling is exempt for acks == 0, the channel may be throttled due to
+          // bandwidth quota violation.
+          requestHelper.sendNoOpResponseExemptThrottle(request)
         }
       } else {
-        requestChannel.sendResponse(request, new ProduceResponse(mergedResponseStatus.asJava, 0), None)
+        requestChannel.sendResponse(request, new ProduceResponse(mergedResponseStatus.asJava, maxThrottleTimeMs), None)
       }
     }
 
@@ -296,8 +313,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         apiVersionManager.apiVersionResponse(requestThrottleMs)
       }
     }
-
-    requestChannel.sendResponse(request, createResponseCallback(0), None)
+    requestHelper.sendResponseMaybeThrottle(request, createResponseCallback)
 
   }
 
@@ -357,7 +373,10 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         Collections.emptyList(),
         clusterAuthorizedOperations
       )
-      requestChannel.sendResponse(request, response, None)
+      requestHelper.sendResponseMaybeThrottle(request, th=>{
+        response.maybeSetThrottleTimeMs(th)
+        response
+      })
       null
     })
 
@@ -879,15 +898,33 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         response
       }
 
-      // Get the actual response. This will update the fetch context.
-      unconvertedFetchResponse = fetchContext.updateAndGenerateResponseData(partitions)
-      val responsePartitionsSize = unconvertedFetchResponse.data().responses().stream().mapToInt(_.partitions().size()).sum()
-      trace(s"Sending Fetch response with partitions.size=$responsePartitionsSize, " +
-        s"metadata=${unconvertedFetchResponse.sessionId} ${}")
+      val responseSize = fetchContext.getResponseSize(partitions, versionId)
+      val timeMs = time.milliseconds()
+      val requestThrottleTimeMs = quotas.request.maybeRecordAndGetThrottleTimeMs(request, timeMs)
+      val bandwidthThrottleTimeMs = quotas.fetch.maybeRecordAndGetThrottleTimeMs(request, responseSize, timeMs)
 
-
+      val maxThrottleTimeMs = math.max(bandwidthThrottleTimeMs, requestThrottleTimeMs)
+      if (maxThrottleTimeMs > 0) {
+        request.apiThrottleTimeMs = maxThrottleTimeMs
+        // Even if we need to throttle for request quota violation, we should "unrecord" the already recorded value
+        // from the fetch quota because we are going to return an empty response.
+        quotas.fetch.unrecordQuotaSensor(request, responseSize, timeMs)
+        if (bandwidthThrottleTimeMs > requestThrottleTimeMs) {
+          requestHelper.throttle(quotas.fetch, request, bandwidthThrottleTimeMs)
+        } else {
+          requestHelper.throttle(quotas.request, request, requestThrottleTimeMs)
+        }
+        // If throttling is required, return an empty response.
+        unconvertedFetchResponse = fetchContext.getThrottledResponse(maxThrottleTimeMs)
+      } else {
+        // Get the actual response. This will update the fetch context.
+        unconvertedFetchResponse = fetchContext.updateAndGenerateResponseData(partitions)
+        val responsePartitionsSize = unconvertedFetchResponse.data().responses().stream().mapToInt(_.partitions().size()).sum()
+        trace(s"Sending Fetch response with partitions.size=$responsePartitionsSize, " +
+          s"metadata=${unconvertedFetchResponse.sessionId}")
+      }
       // Send the response immediately.
-      requestChannel.sendResponse(request, createResponse(5), None)
+      requestChannel.sendResponse(request, createResponse(maxThrottleTimeMs), None)
     }
 
 

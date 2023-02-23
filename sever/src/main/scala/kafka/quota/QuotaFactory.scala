@@ -1,0 +1,94 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package kafka.quota
+
+import com.tong.kafka.common.metrics.Metrics
+import com.tong.kafka.common.utils.Time
+import com.tong.kafka.server.quota.{ClientQuotaCallback, ClientQuotaType}
+import kafka.quota.QuotaType.{Fetch, Produce}
+import kafka.server.KafkaConfig
+import kafka.utils.Logging
+
+object QuotaType {
+  case object Fetch extends QuotaType
+
+  case object Produce extends QuotaType
+
+  case object Request extends QuotaType
+
+  case object ControllerMutation extends QuotaType
+
+  case object LeaderReplication extends QuotaType
+
+  case object FollowerReplication extends QuotaType
+
+  case object AlterLogDirsReplication extends QuotaType
+
+  def toClientQuotaType(quotaType: QuotaType): ClientQuotaType = {
+    quotaType match {
+      case QuotaType.Fetch => ClientQuotaType.FETCH
+      case QuotaType.Produce => ClientQuotaType.PRODUCE
+      case QuotaType.Request => ClientQuotaType.REQUEST
+      case QuotaType.ControllerMutation => ClientQuotaType.CONTROLLER_MUTATION
+      case _ => throw new IllegalArgumentException(s"Not a client quota type: $quotaType")
+    }
+  }
+}
+
+sealed trait QuotaType
+
+object QuotaFactory extends Logging {
+
+
+  case class QuotaManagers(fetch: ClientQuotaManager,
+                           produce: ClientQuotaManager,
+                           request: ClientRequestQuotaManager,
+                           clientQuotaCallback: Option[ClientQuotaCallback]) {
+    def shutdown(): Unit = {
+      fetch.shutdown()
+      produce.shutdown()
+      request.shutdown()
+      clientQuotaCallback.foreach(_.close())
+    }
+  }
+
+  def instantiate(cfg: KafkaConfig, metrics: Metrics, time: Time, threadNamePrefix: String): QuotaManagers = {
+
+    val clientQuotaCallback = Option(cfg.getConfiguredInstance(KafkaConfig.ClientQuotaCallbackClassProp,
+      classOf[ClientQuotaCallback]))
+    QuotaManagers(
+      new ClientQuotaManager(clientConfig(cfg), metrics, Fetch, time, threadNamePrefix, clientQuotaCallback),
+      new ClientQuotaManager(clientConfig(cfg), metrics, Produce, time, threadNamePrefix, clientQuotaCallback),
+      new ClientRequestQuotaManager(clientConfig(cfg), metrics, time, threadNamePrefix, clientQuotaCallback),
+      clientQuotaCallback
+    )
+  }
+
+  def clientConfig(cfg: KafkaConfig): ClientQuotaManagerConfig = {
+    ClientQuotaManagerConfig(
+      numQuotaSamples = cfg.numQuotaSamples,
+      quotaWindowSizeSeconds = cfg.quotaWindowSizeSeconds
+    )
+  }
+
+  def clientControllerMutationConfig(cfg: KafkaConfig): ClientQuotaManagerConfig = {
+    ClientQuotaManagerConfig(
+      numQuotaSamples = cfg.numControllerQuotaSamples,
+      quotaWindowSizeSeconds = cfg.controllerQuotaWindowSizeSeconds
+    )
+  }
+}

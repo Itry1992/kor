@@ -15,6 +15,7 @@ import com.tong.kafka.server.common.BrokerState
 import kafka.cluster.EndPoint
 import kafka.group.GroupCoordinator
 import kafka.network.{SampleAcceptor, SocketServer}
+import kafka.quota.QuotaFactory
 import kafka.security.CredentialProvider
 import kafka.server.Sever.{BrokerIdLabel, ClusterIdLabel, MetricsPrefix}
 import kafka.utils.{CoreUtils, Logging}
@@ -30,8 +31,8 @@ trait Server {
   def awaitShutdown(): Unit
 }
 
-
 class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val config: AdapterConfig) extends Server with Logging {
+  var quotaManagers: QuotaFactory.QuotaManagers = null
   private val startupComplete = new AtomicBoolean(false)
   private val isShuttingDown = new AtomicBoolean(false)
   private val isStartingUp = new AtomicBoolean(false)
@@ -51,6 +52,7 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
     if (startupComplete.get)
       return
 
+
     val canStartup = isStartingUp.compareAndSet(false, true)
     if (canStartup) {
       _brokerState = BrokerState.STARTING
@@ -66,6 +68,8 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
       val tlqConsumer = new MockConsumer(tlqProduce, tlqManager)
       val coordinator = GroupCoordinator(config, Time.SYSTEM)
       coordinator.startup()
+      quotaManagers = QuotaFactory.instantiate(config, metrics, time, "quota_managers")
+
       val apiHandler = new AdapterRequestHandler(
         socketServer.requestChannel,
         apiVersionManager,
@@ -75,7 +79,8 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
         tlqProduce = tlqProduce,
         topicManager = topicManager,
         tlqConsumer = tlqConsumer,
-        groupCoordinator = coordinator
+        groupCoordinator = coordinator,
+        quotas = quotaManagers
       )
       requestHandlerPool = new KafkaRequestHandlerPool(brokerId = brokerId, requestChannel = socketServer.requestChannel, apis = apiHandler, time, numThreads = config.numIoThreads, requestHandlerAvgIdleMetricName = s"requestHandlerAvgIdleMetric", logAndThreadNamePrefix = s"${SampleAcceptor.ThreadPrefix}")
       socketServer.enableRequestProcessing()
@@ -95,6 +100,9 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
         CoreUtils.swallow(requestHandlerPool.shutdown(), this)
       if (metrics != null)
         CoreUtils.swallow(metrics.close(), this)
+      if (quotaManagers != null)
+        CoreUtils.swallow(quotaManagers.shutdown(), this)
+
       startupComplete.set(false)
       isShuttingDown.set(false)
       shutdownLatch.countDown()
