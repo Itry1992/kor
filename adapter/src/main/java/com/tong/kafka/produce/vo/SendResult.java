@@ -18,23 +18,26 @@ public class SendResult {
         return offset;
     }
 
-    public void setOffset(long offset) {
+    public SendResult setOffset(long offset) {
         this.offset = offset;
+        return this;
     }
 
     public long getLogAppendTime() {
         return logAppendTime;
     }
 
-    public void setLogAppendTime(long logAppendTime) {
+    public SendResult setLogAppendTime(long logAppendTime) {
         this.logAppendTime = logAppendTime;
+        return this;
     }
 
     public long getLogStartOffset() {
         return logStartOffset;
     }
 
-    public void setLogStartOffset(long logStartOffset) {
+    public SendResult setLogStartOffset(long logStartOffset) {
         this.logStartOffset = logStartOffset;
+        return this;
     }
 }

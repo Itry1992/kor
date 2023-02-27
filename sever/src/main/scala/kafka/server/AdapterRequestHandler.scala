@@ -21,7 +21,7 @@ import com.tong.kafka.consumer.vo.{CommitOffsetRequest, TlqOffsetRequest, TopicP
 import com.tong.kafka.manager.ITlqManager
 import com.tong.kafka.manager.vo.TopicMetaData
 import com.tong.kafka.produce.ITlqProduce
-import com.tong.kafka.produce.exception.MessageTooLagerException
+import com.tong.kafka.produce.exception.CommonKafkaException
 import com.tong.kafka.produce.vo.KafkaRecordAttr
 import com.tong.kafka.server.common.MetadataVersion
 import kafka.group.{GroupCoordinator, JoinGroupResult, LeaveGroupResult, SyncGroupResult}
@@ -205,20 +205,24 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
             case (batch, r) =>
               val attr = new KafkaRecordAttr(batch.magic())
               try {
-                Option(tlqProduce.sendBatch(topicPartition, r.asJava, attr)
+                Option(tlqProduce.sendBatch(topicPartition, r.asJava, attr, produceRequest.timeout())
                   .whenComplete((sendRes, throwable) => {
                     if (throwable != null) {
                       error(throwable.getMessage, throwable)
-                      responseStatus += (topicPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR,
-                        throwable.getMessage))
+                      throwable match {
+                        case e: CommonKafkaException => responseStatus += (topicPartition -> new PartitionResponse(e.getError,
+                          throwable.getMessage))
+                        case _ => responseStatus += (topicPartition -> new PartitionResponse(Errors.UNKNOWN_SERVER_ERROR,
+                          throwable.getMessage))
+                      }
                     }
                     else {
                       responseStatus += (topicPartition -> new PartitionResponse(Errors.NONE, sendRes.getOffset, sendRes.getLogAppendTime, sendRes.getLogStartOffset))
                     }
                   }))
               } catch {
-                case e: MessageTooLagerException =>
-                  responseStatus += (topicPartition -> new PartitionResponse(Errors.MESSAGE_TOO_LARGE, e.getMessage))
+                case e: CommonKafkaException =>
+                  responseStatus += (topicPartition -> new PartitionResponse(e.getError, e.getMessage))
                   None
               }
           }
@@ -313,6 +317,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         apiVersionManager.apiVersionResponse(requestThrottleMs)
       }
     }
+
     requestHelper.sendResponseMaybeThrottle(request, createResponseCallback)
 
   }
@@ -373,7 +378,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         Collections.emptyList(),
         clusterAuthorizedOperations
       )
-      requestHelper.sendResponseMaybeThrottle(request, th=>{
+      requestHelper.sendResponseMaybeThrottle(request, th => {
         response.maybeSetThrottleTimeMs(th)
         response
       })
@@ -964,31 +969,32 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
           topicManager.saveLeaderNode(tp, config.getCurrentNode)
           if (tlqManager.hasTopicPartition(tp)) {
             val future: CompletableFuture[MemoryRecords] = tlqConsumer.pullMessage(tp, partitionData.fetchOffset, params.maxWaitMs.toInt, config.getHtpPullBatchMums, params.maxBytes, params.minBytes)
-            future.whenComplete((record, throwable) => {
+            future.handle((record, throwable) => {
               val fetchPartitionData = if (throwable != null) {
                 error(throwable.getMessage, throwable)
-                //Errors.NOT_LEADER_OR_FOLLOWER ||
-                //              error == Errors.REPLICA_NOT_AVAILABLE ||
-                //                error == Errors.KAFKA_STORAGE_ERROR ||
-                //                error == Errors.FENCED_LEADER_EPOCH ||
-                //                error == Errors.OFFSET_NOT_AVAILABLE
-                //UNKNOWN_TOPIC_OR_PARTITION
-                //UNKNOWN_TOPIC_ID
-                //INCONSISTENT_TOPIC_ID
-                //以上8个错误，客户端会重新跟新metadata
-                //OFFSET_OUT_OF_RANGE , 会重新查询offset
-                //              UNKNOWN_SERVER_ERROR,记录error的信息
-                //CORRUPT_MESSAGE->kafka expection
-                FetchPartitionData(error =
-                  Errors.UNKNOWN_SERVER_ERROR,
-                  highWatermark = 0,
-                  logStartOffset = 0,
-                  records = MemoryRecords.EMPTY,
-                  divergingEpoch = None,
-                  lastStableOffset = None,
-                  abortedTransactions = None,
-                  preferredReadReplica = None,
-                  isReassignmentFetch = false)
+                throwable match {
+                  case e: CommonKafkaException => FetchPartitionData(error =
+                    e.getError,
+                    highWatermark = 0,
+                    logStartOffset = 0,
+                    records = MemoryRecords.EMPTY,
+                    divergingEpoch = None,
+                    lastStableOffset = None,
+                    abortedTransactions = None,
+                    preferredReadReplica = None,
+                    isReassignmentFetch = false)
+                  case _ =>
+                    FetchPartitionData(error =
+                      Errors.UNKNOWN_SERVER_ERROR,
+                      highWatermark = 0,
+                      logStartOffset = 0,
+                      records = MemoryRecords.EMPTY,
+                      divergingEpoch = None,
+                      lastStableOffset = None,
+                      abortedTransactions = None,
+                      preferredReadReplica = None,
+                      isReassignmentFetch = false)
+                }
               } else {
                 FetchPartitionData(
                   highWatermark = Long.MaxValue,

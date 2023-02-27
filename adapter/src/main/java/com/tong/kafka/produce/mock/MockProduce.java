@@ -29,7 +29,7 @@ public class MockProduce extends AbsTlqProduce {
     private AtomicLong offsetCache = new AtomicLong();
 
     @Override
-    public CompletableFuture<SendResult> sendBatch(TopicPartition tp, List<Record> records, KafkaRecordAttr messageAttr) throws MessageTooLagerException {
+    public CompletableFuture<SendResult> sendBatch(TopicPartition tp, List<Record> records, KafkaRecordAttr messageAttr, int timeout) throws MessageTooLagerException {
         List<Message> messages = buildBatchRecord(records, messageAttr, tp);
         Optional<TlqBrokerNode> tlqBroker = manager.getTlqBrokerNode(tp);
         //

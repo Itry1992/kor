@@ -3,7 +3,7 @@ package com.tong.kafka.manager.vo;
 public class TlqBrokerNode {
     private String port;
     private String addr;
-    private String brokerId;
+    private int brokerId;
 
     public String getPort() {
         return port;
@@ -21,11 +21,11 @@ public class TlqBrokerNode {
         this.addr = addr;
     }
 
-    public String getBrokerId() {
+    public int getBrokerId() {
         return brokerId;
     }
 
-    public void setBrokerId(String brokerId) {
+    public void setBrokerId(int brokerId) {
         this.brokerId = brokerId;
     }
 

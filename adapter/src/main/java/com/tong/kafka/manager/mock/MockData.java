@@ -14,7 +14,7 @@ public class MockData {
         int[] ints = {1000, 1001, 1002};
         tlqBrokerNodes = Arrays.stream(ints).mapToObj(i -> {
             TlqBrokerNode tlqBrokerNode = new TlqBrokerNode();
-            tlqBrokerNode.setBrokerId(Integer.toString(i));
+            tlqBrokerNode.setBrokerId(i);
             tlqBrokerNode.setPort("9999");
             tlqBrokerNode.setAddr("localhost");
             return tlqBrokerNode;

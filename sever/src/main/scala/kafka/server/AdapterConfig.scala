@@ -1,8 +1,8 @@
 package kafka.server
 
-import com.tong.kafka.common.Node
 import com.tong.kafka.common.config.ConfigDef
 import com.tong.kafka.common.utils.Utils
+import com.tong.kafka.common.{Node, AdapterConfig => JAdapterConfig}
 import kafka.server.AdapterConfig._
 import kafka.utils.Logging
 
@@ -11,7 +11,7 @@ import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
 
-class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) extends KafkaConfig(props = props, doLog = doLog, configDef = AdapterConfig.configDef) with Logging {
+class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) extends KafkaConfig(props = props, doLog = doLog, configDef = AdapterConfig.configDef) with Logging with JAdapterConfig {
   this.logIdent = ""
 
 
@@ -107,6 +107,20 @@ class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) ext
       return None
     Option(new Node(nodeId.get, list(1), port.get))
   }
+
+  override def getNameSrvProp: String = getString(JAdapterConfig.NameSrvProp)
+
+  override def getDomainName: String = getString(JAdapterConfig.DomainName)
+
+  override def getPoolIdleWaitingTime: Integer = getInt(JAdapterConfig.PoolIdleWaitingTime)
+
+  override def getPollPeriod: Integer = getInt(JAdapterConfig.PoolPeriodMs)
+
+  override def getPoolMaxConsumerNums: Integer = getInt(JAdapterConfig.PollMaxConsumerNums)
+
+  override def getPoolMaxProduceNums: Integer = getInt(JAdapterConfig.PollMaxProducerNums)
+
+  override def getPoolMaxManagerNums: Integer = getInt(JAdapterConfig.PoolMaxManagerNums)
 }
 
 
@@ -141,6 +155,13 @@ object AdapterConfig {
       .define(AdapterNodeId, INT, null, HIGH, AdapterNodeIdDoc)
       .define(AdapterListenAddress, STRING, "localhost:9999", HIGH, AdapterListenAddressDoc)
       .define(HtpPullBatchMums, INT, 20, MEDIUM, HtpPullBatchMumsDoc)
+      .define(JAdapterConfig.NameSrvProp, STRING, null, HIGH, "")
+      .define(JAdapterConfig.DomainName, STRING, "domain1", HIGH, "")
+      .define(JAdapterConfig.PoolPeriodMs, INT, 30 * 1000, LOW, "")
+      .define(JAdapterConfig.PollMaxConsumerNums, INT, 2, LOW, "")
+      .define(JAdapterConfig.PoolMaxManagerNums, INT, 1, LOW, "")
+      .define(JAdapterConfig.PollMaxProducerNums, INT, 2, LOW, "")
+      .define(JAdapterConfig.PoolIdleWaitingTime, INT, 5 * 60 * 1000, LOW, "")
   }
 
 
