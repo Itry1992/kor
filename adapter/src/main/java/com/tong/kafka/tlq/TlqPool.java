@@ -2,6 +2,7 @@ package com.tong.kafka.tlq;
 
 import com.tong.kafka.common.AdapterConfig;
 import com.tongtech.client.admin.TLQManager;
+import com.tongtech.client.consumer.topic.TLQTopicPullConsumer;
 import com.tongtech.client.producer.topic.TLQTopicProducer;
 import com.tongtech.slf4j.Logger;
 import com.tongtech.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ public class TlqPool {
 
     private final Pool<TLQTopicProducer, TlqProduceWrapper> produceWrapperPool;
     private final Pool<TLQManager, TlqManagerWrapper> managerPool;
+    private final Pool<TLQTopicPullConsumer, TlqConsumerWrapper> consumerPool;
 
     public TlqPool(ScheduledExecutorService executorService, AdapterConfig config) {
         this.nameSrv = config.getNameSrvProp();
@@ -33,7 +35,8 @@ public class TlqPool {
         this.produceWrapperPool = new Pool<>(this.executorService, config.getPoolMaxProduceNums(), this.period, tlqProduceWrapper);
         TlqManagerWrapper managerWrapper = new TlqManagerWrapper(config, this.nameSrv, this.domainName);
         this.managerPool = new Pool<>(this.executorService, config.getPoolMaxManagerNums(), this.period, managerWrapper);
-
+        TlqConsumerWrapper consumerWrapper = new TlqConsumerWrapper(this.nameSrv, config, this.domainName);
+        this.consumerPool = new Pool<>(this.executorService, config.getPoolMaxConsumerNums(), this.period, consumerWrapper);
     }
 
     public Optional<TLQTopicProducer> getProducer() {
@@ -42,6 +45,10 @@ public class TlqPool {
 
     public Optional<TLQManager> getManager() {
         return managerPool.get();
+    }
+
+    public Optional<TLQTopicPullConsumer> getConsumer() {
+        return consumerPool.get();
     }
 
     private static class Pool<T2, T extends AbsTlqWrapper<T2>> {

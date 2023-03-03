@@ -68,7 +68,7 @@ public class MockConsumer extends AbsTlqConsumer implements ITlqConsumer {
 
 
     @Override
-    public CompletableFuture<HashMap<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, TlqOffsetRequest> requestMap) {
+    public CompletableFuture<Map<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, TlqOffsetRequest> requestMap) {
         HashMap<TopicPartition, TopicPartitionOffsetData> result = new HashMap<>();
         requestMap.forEach((key, value) -> {
             TopicPartitionOffsetData offsetData = new TopicPartitionOffsetData(key);
@@ -78,7 +78,7 @@ public class MockConsumer extends AbsTlqConsumer implements ITlqConsumer {
     }
 
     @Override
-    public CompletableFuture<Map<TopicPartition, Errors>> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap) {
+    public CompletableFuture<Map<TopicPartition, Errors>> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap, String groupId) {
         offsetMap.forEach((key, value) -> {
             commitedOffsetMap.put(key, value.getCommitOffset());
         });

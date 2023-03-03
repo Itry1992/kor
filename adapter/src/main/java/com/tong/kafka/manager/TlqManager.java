@@ -5,7 +5,7 @@ import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.manager.vo.CacheTopicMetadata;
 import com.tong.kafka.manager.vo.TlqBrokerNode;
 import com.tong.kafka.manager.vo.TopicMetaData;
-import com.tong.kafka.produce.exception.CommonKafkaException;
+import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.tlq.TlqPool;
 import com.tongtech.client.admin.TLQManager;
 

@@ -18,6 +18,11 @@ public class TopicPartitionOffsetData {
         error = Errors.NONE;
     }
 
+    public TopicPartitionOffsetData(TopicPartition topicPartition, Errors error) {
+        this.topicPartition = topicPartition;
+        this.error = error;
+    }
+
 
     public long getOffset() {
         return offset;

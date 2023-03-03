@@ -18,10 +18,10 @@ import com.tong.kafka.common.utils.{BufferSupplier, Time}
 import com.tong.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import com.tong.kafka.consumer.ITlqConsumer
 import com.tong.kafka.consumer.vo.{CommitOffsetRequest, TlqOffsetRequest, TopicPartitionOffsetData}
+import com.tong.kafka.exception.{CommonKafkaException, TlqExceptionHelper}
 import com.tong.kafka.manager.ITlqManager
 import com.tong.kafka.manager.vo.TopicMetaData
 import com.tong.kafka.produce.ITlqProduce
-import com.tong.kafka.produce.exception.CommonKafkaException
 import com.tong.kafka.produce.vo.KafkaRecordAttr
 import com.tong.kafka.server.common.MetadataVersion
 import kafka.group.{GroupCoordinator, JoinGroupResult, LeaveGroupResult, SyncGroupResult}
@@ -692,7 +692,11 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
       error(err.getMessage, err)
       val topics = offsetRequest.data().topics().asScala.map(offsetTopic => {
         val partitionResponse = offsetTopic.partitions().asScala.map(partition => {
-          getErrorListOffsetsPartitionResponse(Errors.UNKNOWN_SERVER_ERROR, partition.partitionIndex())
+          val error = err match {
+            case e: CommonKafkaException => e.getError
+            case _ => Errors.UNKNOWN_SERVER_ERROR
+          }
+          getErrorListOffsetsPartitionResponse(error, partition.partitionIndex())
         })
         new ListOffsetsTopicResponse().setName(offsetTopic.name())
           .setPartitions(partitionResponse.asJava)
@@ -1063,10 +1067,10 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         }
       }
     }
-    tlqConsumer.commitOffset(tlqRequest.asJava).thenAccept(r => {
+    tlqConsumer.commitOffset(tlqRequest.asJava, offsetCommitRequest.data().groupId()).thenAccept(r => {
       val result = Option(r).getOrElse(Map.empty.asJava)
       tlqRequest.keySet.foreach(tp => {
-        if (result.containsKey(tp)) {
+        if (result.containsKey(tp) && result.get(tp) != Errors.NONE) {
           topicPartitionToErrors += (tp -> result.get(tp))
         } else {
           commitStatus += (tp -> Errors.NONE)
@@ -1075,7 +1079,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     }).exceptionally((e) => {
       error(e.getMessage, e)
       tlqRequest.keySet.foreach(tp => {
-        topicPartitionToErrors += (tp -> Errors.UNKNOWN_SERVER_ERROR)
+        topicPartitionToErrors += (tp -> TlqExceptionHelper.tlqExceptionConvert(e).getError)
       })
       null
     }).thenRun(() => sendResponseCallback(commitStatus.toMap))

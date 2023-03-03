@@ -8,7 +8,7 @@ import java.util.Arrays;
  * 查询对应的offset
  */
 public class TlqOffsetRequest {
-    enum Type {
+    public enum Type {
         Start(-2), End(-1), Timestamp(0);
         private long value;
 
@@ -18,6 +18,10 @@ public class TlqOffsetRequest {
 
         public static Type valueOf(long l) {
             return Arrays.stream(Type.values()).filter(r -> r.value == l).findFirst().orElse(Timestamp);
+        }
+
+        public long getValue() {
+            return value;
         }
     }
 

@@ -2,7 +2,7 @@ package com.tong.kafka.produce;
 
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.record.Record;
-import com.tong.kafka.produce.exception.CommonKafkaException;
+import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.produce.vo.KafkaRecordAttr;
 import com.tong.kafka.produce.vo.SendResult;
 

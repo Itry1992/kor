@@ -1,5 +1,7 @@
 package com.tong.kafka.manager.vo;
 
+import java.util.Objects;
+
 public class TlqBrokerNode {
     private String port;
     private String addr;
@@ -36,5 +38,18 @@ public class TlqBrokerNode {
                 ", addr='" + addr + '\'' +
                 ", brokerId='" + brokerId + '\'' +
                 '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        TlqBrokerNode that = (TlqBrokerNode) o;
+        return brokerId == that.brokerId && Objects.equals(port, that.port) && Objects.equals(addr, that.addr);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(port, addr, brokerId);
     }
 }

@@ -8,7 +8,6 @@ import com.tong.kafka.consumer.vo.ConsumerGroupOffsetData;
 import com.tong.kafka.consumer.vo.TlqOffsetRequest;
 import com.tong.kafka.consumer.vo.TopicPartitionOffsetData;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -28,7 +27,7 @@ public interface ITlqConsumer {
      * @param requestMap 主题分区->查询信息
      * @return 主题分区->offset
      */
-    CompletableFuture<HashMap<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, TlqOffsetRequest> requestMap);
+    CompletableFuture<Map<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, TlqOffsetRequest> requestMap);
 
     /**
      * 向主题分区拉取信息，tlq目前不支持多主题拉取
@@ -47,6 +46,7 @@ public interface ITlqConsumer {
      * 提交offset,
      *
      * @param offsetMap
+     * @param groupId
      */
-    CompletableFuture<Map<TopicPartition, Errors>> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap);
+    CompletableFuture<Map<TopicPartition, Errors>> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap,String groupId);
 }
