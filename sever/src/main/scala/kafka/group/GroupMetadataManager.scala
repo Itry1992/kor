@@ -141,7 +141,7 @@ class GroupMetadataManager(brokerId: Int,
     }
   }
 
-  //todo maybe cache this group ,
+  //保存分配结果，todo maybe cache this group ,
   def storeGroup(group: GroupMetadata,
                  groupAssignment: Map[String, Array[Byte]],
                  responseCallback: Errors => Unit,

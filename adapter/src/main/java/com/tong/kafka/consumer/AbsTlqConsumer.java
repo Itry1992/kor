@@ -10,6 +10,7 @@ import com.tong.kafka.manager.ITlqManager;
 import com.tong.kafka.manager.vo.TlqBrokerNode;
 import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.produce.vo.KafkaRecordAttr;
+import com.tongtech.client.common.SystemConfig;
 import com.tongtech.client.message.Message;
 import com.tongtech.client.message.MessageExt;
 
@@ -67,7 +68,7 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
             int nextMaxWait = maxWaitTime - (int) useTime;
             EXPECTED_REQUEST_CONSUMPTION_TIME = (useTime + EXPECTED_REQUEST_CONSUMPTION_TIME) / 2;
             if (memoryRecords.sizeInBytes() < minByte && System.currentTimeMillis() - beginTimes < nextMaxWait - EXPECTED_REQUEST_CONSUMPTION_TIME) {
-                return pullMessageChain(node, topic, last.getCommitLogOffset(), nextMaxWait, Math.min(2 * batchNum, 2000), maxBate, minByte, messages, System.currentTimeMillis());
+                return pullMessageChain(node, topic, last.getCommitLogOffset(), nextMaxWait, Math.min(2 * batchNum, SystemConfig.TLQ9_MAX_PULL_NUM), maxBate, minByte, messages, System.currentTimeMillis());
             } else {
                 return CompletableFuture.completedFuture(memoryRecords);
             }

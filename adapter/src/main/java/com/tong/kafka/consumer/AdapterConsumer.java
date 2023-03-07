@@ -3,10 +3,7 @@ package com.tong.kafka.consumer;
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.common.requests.OffsetFetchResponse;
-import com.tong.kafka.consumer.vo.CommitOffsetRequest;
-import com.tong.kafka.consumer.vo.ConsumerGroupOffsetData;
-import com.tong.kafka.consumer.vo.TlqOffsetRequest;
-import com.tong.kafka.consumer.vo.TopicPartitionOffsetData;
+import com.tong.kafka.consumer.vo.*;
 import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.exception.TlqExceptionHelper;
 import com.tong.kafka.manager.ITlqManager;
@@ -18,11 +15,11 @@ import com.tongtech.client.common.DirectPullData;
 import com.tongtech.client.consumer.PullCallback;
 import com.tongtech.client.consumer.PullResult;
 import com.tongtech.client.consumer.PullStatus;
+import com.tongtech.client.consumer.common.TopicCommitOffset;
 import com.tongtech.client.consumer.topic.TLQTopicPullConsumer;
 import com.tongtech.client.exception.TLQBrokerException;
 import com.tongtech.client.exception.TLQClientException;
 import com.tongtech.client.message.MessageExt;
-import com.tongtech.client.remoting.enums.ResponseCode;
 import com.tongtech.client.remoting.exception.RemotingException;
 import com.tongtech.slf4j.Logger;
 import com.tongtech.slf4j.LoggerFactory;
@@ -37,6 +34,8 @@ public class AdapterConsumer extends AbsTlqConsumer {
     private static final Integer INVALID_TLQ_BROKER_ID = -1;
     Logger logger = LoggerFactory.getLogger(AdapterConsumer.class);
     private final TlqPool pool;
+
+    private final ConcurrentHashMap<String, TopicPartitionOffsetCacheData> committedOffsetCache = new ConcurrentHashMap<>();
 
     public AdapterConsumer(ITlqManager manager, TlqPool pool) {
         super(manager);
@@ -76,12 +75,35 @@ public class AdapterConsumer extends AbsTlqConsumer {
         return completableFuture;
     }
 
+    private List<TopicPartition> getCommittedOffsetByCache(String groupId, List<TopicPartition> tps, Map<TopicPartition, TopicPartitionOffsetData> result) {
+        List<TopicPartition> unCachedTps = new ArrayList<>();
+        tps.forEach(tp -> {
+            String commitCacheKey = getCommitCacheKey(groupId, tp);
+            TopicPartitionOffsetCacheData cacheData = committedOffsetCache.get(commitCacheKey);
+            if (cacheData == null) {
+                unCachedTps.add(tp);
+            } else {
+                result.put(tp, cacheData);
+            }
+        });
+
+        return unCachedTps;
+
+    }
+
     @Override
     public CompletableFuture<ConsumerGroupOffsetData> getCommittedOffset(String groupId, List<TopicPartition> tps) {
-        //根据主题分区对应的brokerId进行分组，方便后续对不同的broker发送消息
-        Map<Integer, Set<TopicPartition>> brokerIdToTp = tps.stream().collect(Collectors.groupingBy((r) -> manager.getTlqBrokerNode(r).map(TlqBrokerNode::getBrokerId).orElse(INVALID_TLQ_BROKER_ID), Collectors.toSet()));
         //返回的结果
         ConcurrentHashMap<TopicPartition, TopicPartitionOffsetData> tpToData = new ConcurrentHashMap<>();
+        List<TopicPartition> unCachedTopicPartitions = getCommittedOffsetByCache(groupId, tps, tpToData);
+        if (unCachedTopicPartitions.isEmpty()) {
+            ConsumerGroupOffsetData value = new ConsumerGroupOffsetData(groupId);
+            value.setTpToOffsetDataMap(tpToData);
+            return CompletableFuture.completedFuture(value);
+        }
+
+        //根据主题分区对应的brokerId进行分组，方便后续对不同的broker发送消息
+        Map<Integer, Set<TopicPartition>> brokerIdToTp = unCachedTopicPartitions.stream().collect(Collectors.groupingBy((r) -> manager.getTlqBrokerNode(r).map(TlqBrokerNode::getBrokerId).orElse(INVALID_TLQ_BROKER_ID), Collectors.toSet()));
         Optional<TLQTopicPullConsumer> optionalConsumer = pool.getConsumer();
         if (!optionalConsumer.isPresent()) {
             CompletableFuture<ConsumerGroupOffsetData> result = new CompletableFuture<>();
@@ -112,10 +134,10 @@ public class AdapterConsumer extends AbsTlqConsumer {
                             return false;
                         }
                         requestTps.forEach(requestTp -> {
-                            Optional<Map.Entry<com.tongtech.client.admin.TopicPartition, Long>> resTp = res.entrySet().stream().filter(entry -> entry.getKey().getTopic().equals(requestTp.topic())).findAny();
-                            if (resTp.isPresent() && resTp.get().getValue() >= 0) {
+                            Optional<Map.Entry<com.tongtech.client.admin.TopicPartition, TopicCommitOffset>> resTp = res.entrySet().stream().filter(entry -> entry.getKey().getTopic().equals(requestTp.topic())).findAny();
+                            if (resTp.isPresent() && resTp.get().getValue().getCommitOffset() >= 0) {
                                 TopicPartitionOffsetData value = new TopicPartitionOffsetData(requestTp);
-                                value.setOffset(resTp.get().getValue());
+                                value.setOffset(resTp.get().getValue().getCommitOffset());
                                 tpToData.put(requestTp, value);
                             } else {
                                 TopicPartitionOffsetData value = new TopicPartitionOffsetData(requestTp);
@@ -169,7 +191,6 @@ public class AdapterConsumer extends AbsTlqConsumer {
                             TopicPartitionOffsetData value = new TopicPartitionOffsetData(req.getTopicPartition());
                             value.setError(error);
                             resultMap.put(req.getTopicPartition(), value);
-
                         });
                         return false;
                     }
@@ -178,7 +199,11 @@ public class AdapterConsumer extends AbsTlqConsumer {
                         TopicPartitionOffsetData value = new TopicPartitionOffsetData(topicPartition);
                         Optional<Map.Entry<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> findInRes = res.entrySet().stream().filter(en -> isTopicEq(en.getKey(), topicPartition)).findAny();
                         if (findInRes.isPresent()) {
-                            value.setOffset(findInRes.get().getValue().getOffset());
+                            long offset = findInRes.get().getValue().getOffset();
+                            value.setOffset(offset);
+                            if (offset == TopicPartitionOffsetData.INVALID_OFFSET) {
+                                value.setError(Errors.UNKNOWN_TOPIC_OR_PARTITION);
+                            }
                         } else {
                             value.setOffset(TopicPartitionOffsetData.INVALID_OFFSET);
                             value.setError(Errors.UNKNOWN_SERVER_ERROR);
@@ -196,12 +221,14 @@ public class AdapterConsumer extends AbsTlqConsumer {
         return Objects.equals(tp1.getTopic(), tp2.topic());
     }
 
+
     @Override
     public CompletableFuture<Map<TopicPartition, Errors>> commitOffset(Map<TopicPartition, CommitOffsetRequest> offsetMap, String groupId) {
-        //根据主题分区对应的brokerId进行分组，方便后续对不同的broker发送消息
-        Map<Integer, Set<Map.Entry<TopicPartition, CommitOffsetRequest>>> brokerIdToReqs = offsetMap.entrySet().stream().collect(Collectors.groupingBy((r) -> manager.getTlqBrokerNode(r.getKey()).map(TlqBrokerNode::getBrokerId).orElse(INVALID_TLQ_BROKER_ID), Collectors.toSet()));
+
         ConcurrentHashMap<TopicPartition, Errors> resultMap = new ConcurrentHashMap<>();
 
+        //根据主题分区对应的brokerId进行分组，方便后续对不同的broker发送消息
+        Map<Integer, Set<Map.Entry<TopicPartition, CommitOffsetRequest>>> brokerIdToReqs = offsetMap.entrySet().stream().collect(Collectors.groupingBy((r) -> manager.getTlqBrokerNode(r.getKey()).map(TlqBrokerNode::getBrokerId).orElse(INVALID_TLQ_BROKER_ID), Collectors.toSet()));
         Optional<TLQTopicPullConsumer> consumerOpt = pool.getConsumer();
         if (!consumerOpt.isPresent()) {
             offsetMap.entrySet().forEach(e -> {
@@ -219,7 +246,13 @@ public class AdapterConsumer extends AbsTlqConsumer {
             TLQTopicPullConsumer pullConsumer = consumerOpt.get();
             BrokerSelector brokerSelector = new BrokerSelector();
             brokerSelector.setBrokerId(brokerId);
-            Map<String, Long> query = tpToReq.stream().collect(Collectors.toMap(r -> r.getKey().topic(), r -> r.getValue().getCommitOffset()));
+            Map<String, TopicCommitOffset> query = tpToReq.stream().collect(Collectors.toMap(r -> r.getKey().topic(), r -> {
+                TopicCommitOffset topicCommitOffset = new TopicCommitOffset();
+                CommitOffsetRequest offsetRequest = r.getValue();
+                topicCommitOffset.setCommitOffset(offsetRequest.getCommitOffset());
+                topicCommitOffset.setCommitTime((int) (offsetRequest.getCommitTime() / 1000));
+                return topicCommitOffset;
+            }));
             return pullConsumer.commit(pullConsumer.getDomain(), brokerSelector, groupId, query)
                     .handle((res, err) -> {
                         if (err != null) {
@@ -227,11 +260,18 @@ public class AdapterConsumer extends AbsTlqConsumer {
                             return false;
                         }
                         tpToReq.forEach((req) -> {
-                            Optional<Map.Entry<com.tongtech.client.admin.TopicPartition, Integer>> topicRes = res.entrySet().stream().filter(resItem -> isTopicEq(resItem.getKey(), req.getKey())).findAny();
-                            if (topicRes.isPresent() && !Objects.equals(topicRes.get(), ResponseCode.CB_SUCCESS.getStateCode())) {
+                            Optional<Map.Entry<com.tongtech.client.admin.TopicPartition, TopicCommitOffset>> topicRes = res.entrySet().stream().filter(resItem -> isTopicEq(resItem.getKey(), req.getKey())).findAny();
+                            if (!topicRes.isPresent()) {
                                 resultMap.put(req.getKey(), Errors.UNKNOWN_SERVER_ERROR);
                             } else {
+                                TopicCommitOffset topicCommitOffset = topicRes.get().getValue();
+                                if (topicCommitOffset.getCommitOffset() < 0) {
+                                    resultMap.put(req.getKey(), Errors.UNKNOWN_SERVER_ERROR);
+                                    return;
+                                }
                                 resultMap.put(req.getKey(), Errors.NONE);
+                                //同时保存到本地缓存中
+                                cacheCommitOffset(groupId, req, topicCommitOffset);
                             }
                         });
                         return true;
@@ -240,12 +280,22 @@ public class AdapterConsumer extends AbsTlqConsumer {
         return CompletableFuture.allOf(futureStream.toArray(CompletableFuture[]::new)).thenApply((r) -> resultMap);
     }
 
+    private void cacheCommitOffset(String groupId, Map.Entry<TopicPartition, CommitOffsetRequest> req, TopicCommitOffset topicCommitOffset) {
+        String commitCacheKey = getCommitCacheKey(groupId, req.getKey());
+        if (committedOffsetCache.get(commitCacheKey) == null || committedOffsetCache.get(commitCacheKey).getOffsetCommitTime() < topicCommitOffset.getCommitTime()) {
+            TopicPartitionOffsetCacheData cacheData = new TopicPartitionOffsetCacheData(req.getKey());
+            cacheData.setOffset(topicCommitOffset.getCommitOffset());
+            cacheData.setOffsetCommitTime((long) topicCommitOffset.getCommitTime());
+            committedOffsetCache.put(commitCacheKey, cacheData);
+        }
+    }
+
 
     private CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> offsetQuery(Map.Entry<TlqOffsetRequest.Type, Set<TlqOffsetRequest>> en, TLQTopicPullConsumer consumer, BrokerSelector brokerSelector) {
         TlqOffsetRequest.Type type = en.getKey();
         List<String> topics = en.getValue().stream().map(r -> r.getTopicPartition().topic()).collect(Collectors.toList());
         if (type == TlqOffsetRequest.Type.Start) {
-            CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = consumer.beginningOffsets(consumer.getDomain(), brokerSelector, topics)
+            CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = consumer.beginningOffsets(consumer.getDomain(), brokerSelector, topics, 3000)
                     .thenApply(res ->
                             res.entrySet().stream()
                                     .collect(Collectors.toMap((e) -> e.getKey(),
@@ -253,7 +303,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
             return future;
         }
         if (type == TlqOffsetRequest.Type.End) {
-            CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = consumer.endOffsets(consumer.getDomain(), brokerSelector, topics)
+            CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = consumer.endOffsets(consumer.getDomain(), brokerSelector, topics, 3000)
                     .thenApply(res ->
                             res.entrySet().stream()
                                     .collect(Collectors.toMap((e) -> e.getKey(),
@@ -262,7 +312,11 @@ public class AdapterConsumer extends AbsTlqConsumer {
         }
 
         Map<String, Long> topicsReq = en.getValue().stream().collect(Collectors.toMap((e) -> e.getTopicPartition().topic(), TlqOffsetRequest::getTimestamp));
-        return consumer.offsetsForTimes(consumer.getDomain(), brokerSelector, topicsReq);
+        return consumer.offsetsForTimes(consumer.getDomain(), brokerSelector, topicsReq, 3000);
+    }
+
+    private String getCommitCacheKey(String groupId, TopicPartition tp) {
+        return groupId + ":" + tp.topic() + ":" + tp.partition();
     }
 
 }

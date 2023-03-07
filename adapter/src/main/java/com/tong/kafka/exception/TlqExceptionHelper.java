@@ -16,6 +16,9 @@ public class TlqExceptionHelper {
         if (e instanceof RemotingTooMuchRequestException) {
             return new MessageTooLagerException();
         }
+//        if (e instanceof RequestTimeoutException){
+//
+//        }
         if (e instanceof TLQBrokerException) {
             if (((TLQBrokerException) e).getResponseCode()==100){
                 return new CommonKafkaException(Errors.LEADER_NOT_AVAILABLE, e, e.getMessage());
