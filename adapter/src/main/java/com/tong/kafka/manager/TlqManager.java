@@ -2,10 +2,10 @@ package com.tong.kafka.manager;
 
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.protocol.Errors;
+import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.manager.vo.CacheTopicMetadata;
 import com.tong.kafka.manager.vo.TlqBrokerNode;
 import com.tong.kafka.manager.vo.TopicMetaData;
-import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.tlq.TlqPool;
 import com.tongtech.client.admin.TLQManager;
 
@@ -23,7 +23,7 @@ public class TlqManager extends AbstractManager {
     private volatile boolean queryAll = false;
 
     private volatile long allAliveTime;
-    private Map<String, CacheTopicMetadata> cacheTopicMetadataMap = new ConcurrentHashMap<>();
+    private final Map<String, CacheTopicMetadata> cacheTopicMetadataMap = new ConcurrentHashMap<>();
     private volatile boolean clearIng = false;
 
     private final TlqPool tlqPool;
@@ -128,7 +128,7 @@ public class TlqManager extends AbstractManager {
 
             ArrayList<String> queryTopics = new ArrayList<>(queryIngTopics1);
             assert tlqManager != null;
-            CompletableFuture<List<com.tongtech.client.admin.TopicPartition>> completableFuture = tlqManager.partitionsFor(tlqManager.getDomain(), queryAll, queryTopics);
+            CompletableFuture<List<com.tongtech.client.admin.TopicPartition>> completableFuture = tlqManager.partitionsFor(tlqManager.getDomain(), queryAll, queryTopics, 3000);
             queryIngFuture = completableFuture.thenAccept((result) -> {
                 HashMap<String, List<com.tongtech.client.admin.TopicPartition>> topicToTp = new HashMap<>();
                 result.forEach((r) -> {
@@ -171,5 +171,10 @@ public class TlqManager extends AbstractManager {
             });
             return queryIngFuture;
         }
+    }
+
+    @Override
+    public void clearCache(String topic) {
+        this.cacheTopicMetadataMap.remove(topic);
     }
 }

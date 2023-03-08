@@ -53,5 +53,7 @@ public interface ITlqManager {
      */
     boolean hasTopicPartition(TopicPartition tp);
 
+    void clearCache(String topic);
+
 
 }

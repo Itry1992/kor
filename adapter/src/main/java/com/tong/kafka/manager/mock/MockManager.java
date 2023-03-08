@@ -67,4 +67,9 @@ public class MockManager extends AbstractManager {
             return Optional.empty();
         }
     }
+
+    @Override
+    public void clearCache(String topic) {
+
+    }
 }

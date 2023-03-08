@@ -3,12 +3,12 @@ package com.tong.kafka.produce;
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.common.record.Record;
+import com.tong.kafka.exception.CommonKafkaException;
+import com.tong.kafka.exception.TlqExceptionHelper;
 import com.tong.kafka.manager.ITlqManager;
 import com.tong.kafka.manager.vo.TlqBrokerNode;
-import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.produce.vo.KafkaRecordAttr;
 import com.tong.kafka.produce.vo.SendResult;
-import com.tong.kafka.exception.TlqExceptionHelper;
 import com.tong.kafka.tlq.TlqPool;
 import com.tongtech.client.common.BrokerSelector;
 import com.tongtech.client.message.Message;
@@ -48,13 +48,14 @@ public class TlqProduce extends AbsTlqProduce {
                         completableFuture.completeExceptionally(new CommonKafkaException(Errors.LEADER_NOT_AVAILABLE));
                     }
                 }
+
                 @Override
                 public void onException(Throwable throwable) {
-                    completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(throwable));
+                    completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(throwable, manager, tp.topic()));
                 }
             }, timeout);
         } catch (Exception e) {
-            completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e));
+            completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e, manager, tp.topic()));
         }
         return completableFuture;
     }

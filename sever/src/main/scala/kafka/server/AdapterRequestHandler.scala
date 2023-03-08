@@ -1079,7 +1079,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     }).exceptionally((e) => {
       error(e.getMessage, e)
       tlqRequest.keySet.foreach(tp => {
-        topicPartitionToErrors += (tp -> TlqExceptionHelper.tlqExceptionConvert(e).getError)
+        topicPartitionToErrors += (tp -> TlqExceptionHelper.tlqExceptionConvert(e,tlqManager,tp.topic()).getError)
       })
       null
     }).thenRun(() => sendResponseCallback(commitStatus.toMap))

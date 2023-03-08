@@ -66,11 +66,11 @@ public class AdapterConsumer extends AbsTlqConsumer {
 
                 @Override
                 public void onException(Throwable e) {
-                    completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e));
+                    completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e,manager,topic));
                 }
             }, timeOut);
         } catch (TLQClientException | RemotingException | TLQBrokerException | InterruptedException e) {
-            completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e));
+            completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e,manager,topic));
         }
         return completableFuture;
     }
@@ -120,16 +120,14 @@ public class AdapterConsumer extends AbsTlqConsumer {
             Integer brokerId = r.getKey();
             brokerSelector.setBrokerId(brokerId);
             Set<TopicPartition> requestTps = r.getValue();
-            HashMap<String, List<String>> request = new HashMap<>();
             List<String> topics = requestTps.stream().map(TopicPartition::topic).collect(Collectors.toList());
-            request.put(groupId, topics);
             logger.trace("向brokerId:{} 发起查询提交的offset,group:{}, topics:{},", groupId, brokerId, topics);
-            return consumer.committed(consumer.getDomain(), brokerSelector, request)
+            return consumer.committedOffset(consumer.getDomain(), brokerSelector, groupId, topics, 3000)
                     .handle((res, e) -> {
                         //提前处理可能存在的错误
                         if (e != null) {
                             logger.error("向 brokerId:{} 查询提交的offset发生错误 error:{}", brokerId, e);
-                            Errors error = TlqExceptionHelper.tlqExceptionConvert(e).getError();
+                            Errors error = TlqExceptionHelper.tlqExceptionConvert(e,manager, topics.toArray(new String[0])).getError();
                             requestTps.forEach(reqTp -> tpToData.put(reqTp, new TopicPartitionOffsetData(reqTp, error)));
                             return false;
                         }
@@ -181,12 +179,12 @@ public class AdapterConsumer extends AbsTlqConsumer {
             Map<TlqOffsetRequest.Type, Set<TlqOffsetRequest>> typeToReqs = offsetRequests.stream().collect(Collectors.groupingBy(TlqOffsetRequest::getType, Collectors.toSet()));
             BrokerSelector brokerSelector = new BrokerSelector();
             brokerSelector.setBrokerId(brokerId);
-            CompletableFuture[] futures = typeToReqs.entrySet().stream().map(typeToReq -> {
+            CompletableFuture<?>[] futures = typeToReqs.entrySet().stream().map(typeToReq -> {
                 Set<TlqOffsetRequest> requestSet = typeToReq.getValue();
                 CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = offsetQuery(typeToReq, consumer, brokerSelector);
                 return future.handle((res, err) -> {
                     if (err != null) {
-                        Errors error = TlqExceptionHelper.tlqExceptionConvert(err).getError();
+                        Errors error = TlqExceptionHelper.tlqExceptionConvert(err,manager,requestSet.stream().map(r->r.getTopicPartition().topic()).toArray(String[]::new)).getError();
                         requestSet.forEach((req) -> {
                             TopicPartitionOffsetData value = new TopicPartitionOffsetData(req.getTopicPartition());
                             value.setError(error);
@@ -253,10 +251,10 @@ public class AdapterConsumer extends AbsTlqConsumer {
                 topicCommitOffset.setCommitTime((int) (offsetRequest.getCommitTime() / 1000));
                 return topicCommitOffset;
             }));
-            return pullConsumer.commit(pullConsumer.getDomain(), brokerSelector, groupId, query)
+            return pullConsumer.commitOffset(pullConsumer.getDomain(), brokerSelector, groupId, query, 3000)
                     .handle((res, err) -> {
                         if (err != null) {
-                            tpToReq.forEach((req) -> resultMap.put(req.getKey(), TlqExceptionHelper.tlqExceptionConvert(err).getError()));
+                            tpToReq.forEach((req) -> resultMap.put(req.getKey(), TlqExceptionHelper.tlqExceptionConvert(err,manager, query.keySet().toArray(new String[0])).getError()));
                             return false;
                         }
                         tpToReq.forEach((req) -> {
@@ -311,7 +309,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
             return future;
         }
 
-        Map<String, Long> topicsReq = en.getValue().stream().collect(Collectors.toMap((e) -> e.getTopicPartition().topic(), TlqOffsetRequest::getTimestamp));
+        Map<String, Integer> topicsReq = en.getValue().stream().collect(Collectors.toMap((e) -> e.getTopicPartition().topic(), (e) -> (int) (e.getTimestamp() / 1000)));
         return consumer.offsetsForTimes(consumer.getDomain(), brokerSelector, topicsReq, 3000);
     }
 
