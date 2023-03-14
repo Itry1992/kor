@@ -1,7 +1,6 @@
 package kafka.server
 
 import com.tong.kafka.common.config.ConfigDef
-import com.tong.kafka.common.utils.Utils
 import com.tong.kafka.common.{Node, AdapterConfig => JAdapterConfig}
 import kafka.server.AdapterConfig._
 import kafka.utils.Logging
@@ -12,6 +11,7 @@ import scala.jdk.CollectionConverters._
 
 
 class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) extends KafkaConfig(props = props, doLog = doLog, configDef = AdapterConfig.configDef) with Logging with JAdapterConfig {
+
   this.logIdent = ""
 
 
@@ -44,13 +44,6 @@ class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) ext
     thisNode.get
   }
 
-
-  def getCoordinator(gruoupIds: List[String]): List[Node] = {
-    val brokers = getAdapterBroker
-    gruoupIds.map(key => {
-      brokers(Utils.abs(key.hashCode) % brokers.length)
-    })
-  }
 
   /**
    * 获取配置的Htp每次批量拉取消息数量
@@ -112,15 +105,19 @@ class AdapterConfig(doLog: Boolean, override val props: java.util.Map[_, _]) ext
 
   override def getDomainName: String = getString(JAdapterConfig.DomainName)
 
-  override def getPoolIdleWaitingTime: Integer = getInt(JAdapterConfig.PoolIdleWaitingTime)
+  override def getPoolIdleWaitingTimeMs: Integer = getInt(JAdapterConfig.PoolIdleWaitingTime)
 
-  override def getPollPeriod: Integer = getInt(JAdapterConfig.PoolPeriodMs)
+  override def getPollPeriodMs: Integer = getInt(JAdapterConfig.PoolPeriodMs)
 
   override def getPoolMaxConsumerNums: Integer = getInt(JAdapterConfig.PollMaxConsumerNums)
 
   override def getPoolMaxProduceNums: Integer = getInt(JAdapterConfig.PollMaxProducerNums)
 
   override def getPoolMaxManagerNums: Integer = getInt(JAdapterConfig.PoolMaxManagerNums)
+
+  def getAdapterTopicMetadataCacheTimeMs: Integer = getInt(AdapterTopicMetadataCacheTimeMs)
+
+  def getHtpMaxInflightAsyncRequestNums:Integer = getInt(HtpMaxInflightAsyncRequestNums)
 }
 
 
@@ -138,7 +135,10 @@ object AdapterConfig {
   val AdapterListenAddressDoc = "代理服务器监听地址，格式HOST:PORT"
   val HtpPullBatchMums = "htp.pull.batch.nums"
   val HtpPullBatchMumsDoc = "代理服务器每次向htp拉取消息是,拉取消息的数量，建议根据消息大小和kafka 客户端最小拉取大小配置"
-
+  val AdapterTopicMetadataCacheTimeMs = "adapter.topic.metadata.cache.time.ms";
+  val AdapterTopicMetadataCacheTimeMsDoc = "代理服务器中，主题的元数据有效缓存时间，超过缓存时效之后，会重新向管理节点拉取";
+  val HtpMaxInflightAsyncRequestNums = "htp.max.inflight.async.request"
+  val HtpMaxInflightAsyncRequestDoc = "每个htp客户端最大异步请求的数量"
 
   def fromProps(props: Properties): AdapterConfig =
     fromProps(props, true)
@@ -155,13 +155,15 @@ object AdapterConfig {
       .define(AdapterNodeId, INT, null, HIGH, AdapterNodeIdDoc)
       .define(AdapterListenAddress, STRING, "localhost:9999", HIGH, AdapterListenAddressDoc)
       .define(HtpPullBatchMums, INT, 20, MEDIUM, HtpPullBatchMumsDoc)
-      .define(JAdapterConfig.NameSrvProp, STRING, null, HIGH, "")
-      .define(JAdapterConfig.DomainName, STRING, "domain1", HIGH, "")
-      .define(JAdapterConfig.PoolPeriodMs, INT, 30 * 1000, LOW, "")
-      .define(JAdapterConfig.PollMaxConsumerNums, INT, 2, LOW, "")
-      .define(JAdapterConfig.PoolMaxManagerNums, INT, 1, LOW, "")
-      .define(JAdapterConfig.PollMaxProducerNums, INT, 2, LOW, "")
-      .define(JAdapterConfig.PoolIdleWaitingTime, INT, 5 * 60 * 1000, LOW, "")
+      .define(JAdapterConfig.NameSrvProp, STRING, null, HIGH, "htp的管理节点通信地址 tcp://host:port")
+      .define(JAdapterConfig.DomainName, STRING, "domain1", HIGH, "代理节点向htp系统通信时，使用的域名")
+      .define(JAdapterConfig.PoolPeriodMs, INT, 1 * 60 * 1000, LOW, "htp客户端池清理空闲客户端或新增客户端的周期")
+      .define(JAdapterConfig.PollMaxConsumerNums, INT, 2, LOW, "htp客户端池中最大消费组的数量")
+      .define(JAdapterConfig.PoolMaxManagerNums, INT, 1, LOW, "htp客户端池中最大管理者的数量")
+      .define(JAdapterConfig.PollMaxProducerNums, INT, 2, LOW, "htp客户端池中最大生产者的数量")
+      .define(JAdapterConfig.PoolIdleWaitingTime, INT, 5 * 60 * 1000, LOW, "htp客户端每隔多久会被认为是空闲状态")
+      .define(AdapterTopicMetadataCacheTimeMs, INT, 5 * 1000, LOW, AdapterTopicMetadataCacheTimeMsDoc)
+      .define(HtpMaxInflightAsyncRequestNums,INT,20, MEDIUM,HtpMaxInflightAsyncRequestDoc)
   }
 
 

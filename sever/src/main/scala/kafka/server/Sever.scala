@@ -1,17 +1,18 @@
 package kafka.server
 
 import com.tong.kafka.clients.CommonClientConfigs
-import com.tong.kafka.common.Node
 import com.tong.kafka.common.metrics._
 import com.tong.kafka.common.network.ListenerName
 import com.tong.kafka.common.security.auth.SecurityProtocol
 import com.tong.kafka.common.security.scram.internals.ScramMechanism
 import com.tong.kafka.common.security.token.delegation.internals.DelegationTokenCache
 import com.tong.kafka.common.utils.{LogContext, Time}
-import com.tong.kafka.consumer.mock.MockConsumer
-import com.tong.kafka.manager.mock.MockManager
-import com.tong.kafka.produce.mock.MockProduce
+import com.tong.kafka.common.{AdapterScheduler, AdapterSchedulerImpl, Node}
+import com.tong.kafka.consumer.AdapterConsumer
+import com.tong.kafka.manager.AdapterManager
+import com.tong.kafka.produce.AdapterProduce
 import com.tong.kafka.server.common.BrokerState
+import com.tong.kafka.tlq.TlqPool
 import kafka.cluster.EndPoint
 import kafka.group.GroupCoordinator
 import kafka.network.{SampleAcceptor, SocketServer}
@@ -42,6 +43,8 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
   var socketServer: SocketServer = null
   var metrics: Metrics = null
   var requestHandlerPool: KafkaRequestHandlerPool = null
+  var tlqPool: TlqPool = null
+  var adapterScheduler: AdapterScheduler = null;
 
   override def startup(): Unit = {
     info("starting")
@@ -62,11 +65,16 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
       val apiVersionManager = new AdapterBrokerApiVersionManager()
       val point = new EndPoint(host.host(), host.port(), new ListenerName("kafka_adapter_listener"), SecurityProtocol.PLAINTEXT)
       socketServer = new SocketServer(config = config, endpoints = List(point), metrics, time = time, credentialProvider, apiVersionManager)
-      val tlqManager = new MockManager
       val topicManager = new HashTopicManager(config.getAdapterBroker)
-      val tlqProduce = new MockProduce()
-      val tlqConsumer = new MockConsumer(tlqProduce, tlqManager)
-      val coordinator = GroupCoordinator(config, Time.SYSTEM)
+      //      val tlqManager = new MockManager
+      //      val tlqProduce = new MockProduce()
+      //      val tlqConsumer = new MockConsumer(tlqProduce, tlqManager)
+      adapterScheduler = new AdapterSchedulerImpl(1)
+      tlqPool = new TlqPool(adapterScheduler, config)
+      val tlqManager = new AdapterManager(tlqPool, config.getAdapterTopicMetadataCacheTimeMs)
+      val tlqProduce = new AdapterProduce(tlqPool, tlqManager)
+      val tlqConsumer = new AdapterConsumer(tlqManager, tlqPool, adapterScheduler)
+      val coordinator = GroupCoordinator(config, Time.SYSTEM, topicManager)
       coordinator.startup()
       quotaManagers = QuotaFactory.instantiate(config, metrics, time, "quota_managers")
 
@@ -102,7 +110,12 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
         CoreUtils.swallow(metrics.close(), this)
       if (quotaManagers != null)
         CoreUtils.swallow(quotaManagers.shutdown(), this)
-
+      if (tlqPool != null) {
+        CoreUtils.swallow(tlqPool.close(), this)
+      }
+      if (adapterScheduler != null) {
+        CoreUtils.swallow(adapterScheduler.shutdown(), this)
+      }
       startupComplete.set(false)
       isShuttingDown.set(false)
       shutdownLatch.countDown()

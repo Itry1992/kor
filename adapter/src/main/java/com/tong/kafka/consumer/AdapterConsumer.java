@@ -1,5 +1,6 @@
 package com.tong.kafka.consumer;
 
+import com.tong.kafka.common.AdapterScheduler;
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.common.requests.OffsetFetchResponse;
@@ -37,8 +38,8 @@ public class AdapterConsumer extends AbsTlqConsumer {
 
     private final ConcurrentHashMap<String, TopicPartitionOffsetCacheData> committedOffsetCache = new ConcurrentHashMap<>();
 
-    public AdapterConsumer(ITlqManager manager, TlqPool pool) {
-        super(manager);
+    public AdapterConsumer(ITlqManager manager, TlqPool pool, AdapterScheduler scheduler) {
+        super(manager, scheduler);
         this.pool = pool;
     }
 
@@ -66,11 +67,11 @@ public class AdapterConsumer extends AbsTlqConsumer {
 
                 @Override
                 public void onException(Throwable e) {
-                    completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e,manager,topic));
+                    completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e, manager, topic));
                 }
             }, timeOut);
         } catch (TLQClientException | RemotingException | TLQBrokerException | InterruptedException e) {
-            completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e,manager,topic));
+            completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e, manager, topic));
         }
         return completableFuture;
     }
@@ -127,7 +128,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
                         //提前处理可能存在的错误
                         if (e != null) {
                             logger.error("向 brokerId:{} 查询提交的offset发生错误 error:{}", brokerId, e);
-                            Errors error = TlqExceptionHelper.tlqExceptionConvert(e,manager, topics.toArray(new String[0])).getError();
+                            Errors error = TlqExceptionHelper.tlqExceptionConvert(e, manager, topics.toArray(new String[0])).getError();
                             requestTps.forEach(reqTp -> tpToData.put(reqTp, new TopicPartitionOffsetData(reqTp, error)));
                             return false;
                         }
@@ -184,7 +185,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
                 CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = offsetQuery(typeToReq, consumer, brokerSelector);
                 return future.handle((res, err) -> {
                     if (err != null) {
-                        Errors error = TlqExceptionHelper.tlqExceptionConvert(err,manager,requestSet.stream().map(r->r.getTopicPartition().topic()).toArray(String[]::new)).getError();
+                        Errors error = TlqExceptionHelper.tlqExceptionConvert(err, manager, requestSet.stream().map(r -> r.getTopicPartition().topic()).toArray(String[]::new)).getError();
                         requestSet.forEach((req) -> {
                             TopicPartitionOffsetData value = new TopicPartitionOffsetData(req.getTopicPartition());
                             value.setError(error);
@@ -254,7 +255,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
             return pullConsumer.commitOffset(pullConsumer.getDomain(), brokerSelector, groupId, query, 3000)
                     .handle((res, err) -> {
                         if (err != null) {
-                            tpToReq.forEach((req) -> resultMap.put(req.getKey(), TlqExceptionHelper.tlqExceptionConvert(err,manager, query.keySet().toArray(new String[0])).getError()));
+                            tpToReq.forEach((req) -> resultMap.put(req.getKey(), TlqExceptionHelper.tlqExceptionConvert(err, manager, query.keySet().toArray(new String[0])).getError()));
                             return false;
                         }
                         tpToReq.forEach((req) -> {

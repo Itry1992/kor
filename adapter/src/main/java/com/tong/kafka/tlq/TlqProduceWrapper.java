@@ -3,6 +3,9 @@ package com.tong.kafka.tlq;
 import com.tong.kafka.common.AdapterConfig;
 import com.tongtech.client.exception.TLQClientException;
 import com.tongtech.client.producer.topic.TLQTopicProducer;
+import com.tongtech.client.remoting.exception.RemotingConnectException;
+import com.tongtech.client.remoting.exception.RemotingSendRequestException;
+import com.tongtech.client.remoting.exception.RemotingTimeoutException;
 import com.tongtech.slf4j.Logger;
 import com.tongtech.slf4j.LoggerFactory;
 
@@ -19,10 +22,11 @@ public class TlqProduceWrapper extends AbsTlqWrapper<TLQTopicProducer> {
             producer.start();
             this.t = producer;
             this.usable = true;
-        } catch (TLQClientException e) {
+        } catch (TLQClientException | InterruptedException | RemotingTimeoutException | RemotingSendRequestException |
+                 RemotingConnectException e) {
             producer.shutdown();
             logger.error("初始化消费者失败：");
-            logger.error(e.getErrorMessage(), e);
+            logger.error("error :{}", e);
             throw new RuntimeException(e);
         }
     }

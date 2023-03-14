@@ -1658,23 +1658,25 @@ object GroupCoordinator {
 
   def apply(config: AdapterConfig,
             time: Time,
+            topicManager: AdapterTopicManager
            ): GroupCoordinator = {
     val heartbeatPurgatory = DelayedOperationPurgatory[DelayedHeartbeat]("Heartbeat", config.brokerId)
     val rebalancePurgatory = DelayedOperationPurgatory[DelayedRebalance]("Rebalance", config.brokerId)
-    GroupCoordinator(config, heartbeatPurgatory, rebalancePurgatory, time)
+    GroupCoordinator(config, heartbeatPurgatory, rebalancePurgatory, time,topicManager)
   }
 
 
   def apply(config: AdapterConfig,
             heartbeatPurgatory: DelayedOperationPurgatory[DelayedHeartbeat],
             rebalancePurgatory: DelayedOperationPurgatory[DelayedRebalance],
-            time: Time): GroupCoordinator = {
+            time: Time,
+            topicManager:AdapterTopicManager): GroupCoordinator = {
     val groupConfig = GroupConfig(groupMinSessionTimeoutMs = config.groupMinSessionTimeoutMs,
       groupMaxSessionTimeoutMs = config.groupMaxSessionTimeoutMs,
       groupMaxSize = config.groupMaxSize,
       groupInitialRebalanceDelayMs = config.groupInitialRebalanceDelay)
 
-    val groupMetadataManager = new GroupMetadataManager(config.brokerId, time, config)
+    val groupMetadataManager = new GroupMetadataManager(config.brokerId, time, config,topicManager = topicManager)
     new GroupCoordinator(config.brokerId, groupConfig, groupMetadataManager, heartbeatPurgatory,
       rebalancePurgatory)
   }

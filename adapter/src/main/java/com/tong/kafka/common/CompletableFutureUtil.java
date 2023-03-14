@@ -1,28 +1,27 @@
 package com.tong.kafka.common;
 
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
 
 public class CompletableFutureUtil {
-    private static final ScheduledExecutorService EXECUTOR_SERVICE = new ScheduledThreadPoolExecutor(1, new ThreadPoolExecutor.DiscardPolicy());
 
-    public static <T> void completeTimeOut(CompletableFuture<T> completableFuture, T value, int delay, TimeUnit timeUnit) {
+    public static <T> void completeTimeOut(CompletableFuture<T> completableFuture, T value, int delay, AdapterScheduler adapterScheduler) {
         if (completableFuture.isDone() || completableFuture.isCancelled())
             return;
-        EXECUTOR_SERVICE.schedule(() -> {
+        adapterScheduler.scheduleOnce("CompletableFuture completeTimeOut", () -> {
                     if (completableFuture.isDone() || completableFuture.isCancelled())
                         return;
                     completableFuture.complete(value);
                 }
-                , delay, timeUnit);
+                , delay);
     }
 
-    public static <T> void completeExceptionallyTimeOut(CompletableFuture<T> completableFuture, Throwable ex, int delay, TimeUnit timeUnit) {
+    public static <T> void completeExceptionallyTimeOut(CompletableFuture<T> completableFuture, Throwable ex, int delay, AdapterScheduler adapterScheduler) {
         if (completableFuture.isDone() || completableFuture.isCancelled())
             return;
-        EXECUTOR_SERVICE.schedule(() -> {
+        adapterScheduler.scheduleOnce("CompletableFuture completeExceptionallyTimeOut", () -> {
             if (completableFuture.isDone() || completableFuture.isCancelled())
                 return;
             completableFuture.completeExceptionally(ex);
-        }, delay, timeUnit);
+        }, delay);
     }
 }

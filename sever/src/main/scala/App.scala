@@ -1,4 +1,5 @@
 import com.tong.kafka.common.utils.Utils
+import com.tongtech.client.remoting.common.NettySystemConfig
 import kafka.server.{AdapterConfig, AdapterSever}
 
 import java.util.Properties
@@ -15,6 +16,8 @@ object App {
 
   def main(args: Array[String]): Unit = {
     val config = AdapterConfig.fromProps(getProps())
+    val inflightAsyncRequest = config.getHtpMaxInflightAsyncRequestNums
+    System.setProperty(NettySystemConfig.COM_TLQ_REMOTING_CLIENT_ASYNC_SEMAPHORE_VALUE, inflightAsyncRequest.toString)
     val sever = new AdapterSever(brokerId = config.brokerId, host = config.getCurrentNode, config = config)
     sever.startup();
   }

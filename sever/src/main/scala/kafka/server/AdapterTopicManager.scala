@@ -1,5 +1,6 @@
 package kafka.server
 
+import com.tong.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import com.tong.kafka.common.utils.Utils
 import com.tong.kafka.common.{Node, TopicPartition}
 
@@ -9,6 +10,8 @@ import com.tong.kafka.common.{Node, TopicPartition}
  * 该类决定了消息的负载负载均衡
  * */
 trait AdapterTopicManager {
+  def getCoordinator(value: List[String], cType: CoordinatorType): List[Node]
+
   def getLeaderNode(topic: TopicPartition): Node
 
   def saveLeaderNode(topicPartition: TopicPartition, node: Node): Unit
@@ -27,4 +30,13 @@ class HashTopicManager(val nodes: List[Node]) extends AdapterTopicManager {
   override def saveLeaderNode(topicPartition: TopicPartition, node: Node): Unit = {
 
   }
+
+  override def getCoordinator(gruoupIds: List[String], cType: CoordinatorType): List[Node] = {
+    gruoupIds.map(key => {
+      val mod = Utils.abs(key.hashCode) % total
+      sortNode(mod)
+    })
+  }
+
+
 }

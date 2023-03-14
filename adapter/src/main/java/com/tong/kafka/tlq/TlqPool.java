@@ -1,7 +1,9 @@
 package com.tong.kafka.tlq;
 
 import com.tong.kafka.common.AdapterConfig;
+import com.tong.kafka.common.AdapterScheduler;
 import com.tongtech.client.admin.TLQManager;
+import com.tongtech.client.common.Indicators;
 import com.tongtech.client.consumer.topic.TLQTopicPullConsumer;
 import com.tongtech.client.producer.topic.TLQTopicProducer;
 import com.tongtech.slf4j.Logger;
@@ -11,28 +13,26 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 public class TlqPool {
     private final String nameSrv;
     private final String domainName;
     private final int idleWaitingTime;
-    private final ScheduledExecutorService executorService;
+    private final AdapterScheduler executorService;
     private final int period;
 
-    private final Pool<TLQTopicProducer, TlqProduceWrapper> produceWrapperPool;
+    private final Pool<TLQTopicProducer, TlqProduceWrapper> producePool;
     private final Pool<TLQManager, TlqManagerWrapper> managerPool;
     private final Pool<TLQTopicPullConsumer, TlqConsumerWrapper> consumerPool;
 
-    public TlqPool(ScheduledExecutorService executorService, AdapterConfig config) {
+    public TlqPool(AdapterScheduler executorService, AdapterConfig config) {
         this.nameSrv = config.getNameSrvProp();
         this.domainName = config.getDomainName();
-        this.idleWaitingTime = config.getPoolIdleWaitingTime();
+        this.idleWaitingTime = config.getPoolIdleWaitingTimeMs();
         this.executorService = executorService;
-        this.period = config.getPollPeriod();
+        this.period = config.getPollPeriodMs();
         TlqProduceWrapper tlqProduceWrapper = new TlqProduceWrapper(this.nameSrv, config, this.domainName);
-        this.produceWrapperPool = new Pool<>(this.executorService, config.getPoolMaxProduceNums(), this.period, tlqProduceWrapper);
+        this.producePool = new Pool<>(this.executorService, config.getPoolMaxProduceNums(), this.period, tlqProduceWrapper);
         TlqManagerWrapper managerWrapper = new TlqManagerWrapper(config, this.nameSrv, this.domainName);
         this.managerPool = new Pool<>(this.executorService, config.getPoolMaxManagerNums(), this.period, managerWrapper);
         TlqConsumerWrapper consumerWrapper = new TlqConsumerWrapper(this.nameSrv, config, this.domainName);
@@ -40,7 +40,7 @@ public class TlqPool {
     }
 
     public Optional<TLQTopicProducer> getProducer() {
-        return produceWrapperPool.get();
+        return producePool.get();
     }
 
     public Optional<TLQManager> getManager() {
@@ -51,41 +51,58 @@ public class TlqPool {
         return consumerPool.get();
     }
 
-    private static class Pool<T2, T extends AbsTlqWrapper<T2>> {
+
+    public void close() {
+        if (consumerPool != null) {
+            this.consumerPool.close();
+        }
+        if (managerPool != null)
+            this.managerPool.close();
+        if (producePool != null)
+            this.producePool.close();
+    }
+
+    private static class Pool<T2 extends Indicators, T extends AbsTlqWrapper<T2>> {
         Logger logger = LoggerFactory.getLogger(Pool.class);
-        private final ScheduledExecutorService executorService;
+        private final AdapterScheduler executorService;
 
         private final int maxNums;
         private volatile int currentIndex;
 
         private volatile boolean shouldAdd = false;
 
+        private volatile boolean closed = false;
+
         private final List<T> tList = new CopyOnWriteArrayList<>();
 
-        public Pool(ScheduledExecutorService executorService, int maxNums, int period, T first) {
+        public Pool(AdapterScheduler executorService, int maxNums, int period, T first) {
             this.executorService = executorService;
             this.maxNums = maxNums;
             tList.add(first);
-            this.executorService.scheduleAtFixedRate(() -> {
+            this.executorService.schedule("tlq pool clear idle client", () -> {
                 Iterator<T> iterator = tList.iterator();
                 while (iterator.hasNext() && tList.size() > 1) {
                     T next = iterator.next();
                     if (next.maybeClear()) {
-                        iterator.remove();
+                        tList.remove(next);
                     }
                 }
-                if (shouldAdd) {
+                if (shouldAdd && !closed) {
                     shouldAdd = false;
                     if (tList.size() < this.maxNums) {
                         try {
-                            Optional<T> newInstance = (Optional<T>) tList.get(0).getNewInstance();
-                            newInstance.ifPresent(tList::add);
+                            Optional<AbsTlqWrapper<T2>> newInstance = tList.get(0).getNewInstance();
+                            if (!closed) {
+                                newInstance.ifPresent(r -> tList.add((T) r));
+                            } else {
+                                newInstance.ifPresent(AbsTlqWrapper::clear);
+                            }
                         } catch (Throwable e) {
                             logger.error("创建新实例失败", e);
                         }
                     }
                 }
-            }, 0, period, TimeUnit.MILLISECONDS);
+            }, 1000, period);
         }
 
         private Optional<T2> get() {
@@ -108,7 +125,7 @@ public class TlqPool {
         }
 
         private int getAndIncrCurrentIndex() {
-            int currentIndex = this.currentIndex % tList.size();
+            int currentIndex = getCurrentIndex();
             this.currentIndex = (currentIndex + 1) % tList.size();
             return currentIndex;
         }
@@ -117,7 +134,13 @@ public class TlqPool {
             return this.currentIndex % tList.size();
         }
 
-
+        public void close() {
+            closed = true;
+            for (T next : tList) {
+                next.clear();
+                tList.remove(next);
+            }
+        }
     }
 
 }

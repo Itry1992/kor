@@ -1,5 +1,6 @@
 package com.tong.kafka.consumer.mock;
 
+import com.tong.kafka.common.AdapterScheduler;
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.consumer.AbsTlqConsumer;
@@ -26,8 +27,8 @@ public class MockConsumer extends AbsTlqConsumer implements ITlqConsumer {
 
     private Map<TopicPartition, Long> commitedOffsetMap = new ConcurrentHashMap<>();
 
-    public MockConsumer(MockProduce produce, ITlqManager manager) {
-        super(manager);
+    public MockConsumer(MockProduce produce, ITlqManager manager, AdapterScheduler scheduler) {
+        super(manager, scheduler);
         this.produce = produce;
     }
 

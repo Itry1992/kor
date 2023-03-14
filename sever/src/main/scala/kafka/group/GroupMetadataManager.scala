@@ -19,8 +19,9 @@ package kafka.group
 
 import com.tong.kafka.common.TopicPartition
 import com.tong.kafka.common.protocol.Errors
-import com.tong.kafka.common.utils.{Time, Utils}
-import kafka.server.{AdapterConfig, RequestLocal}
+import com.tong.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
+import com.tong.kafka.common.utils.Time
+import kafka.server.{AdapterConfig, AdapterTopicManager, RequestLocal}
 import kafka.utils.CoreUtils.inLock
 import kafka.utils.Implicits._
 import kafka.utils._
@@ -32,7 +33,8 @@ import scala.collection._
 
 class GroupMetadataManager(brokerId: Int,
                            time: Time,
-                           config: AdapterConfig
+                           config: AdapterConfig,
+                           topicManager: AdapterTopicManager
                           ) extends Logging {
   val DefaultOffsetsRetentionCheckIntervalMs = 600000L
   private val groupMetadataCache = new Pool[String, GroupMetadata]
@@ -56,8 +58,8 @@ class GroupMetadataManager(brokerId: Int,
   private val scheduler = new KafkaScheduler(threads = 1, threadNamePrefix = "group-metadata-manager-")
 
   /* The groups with open transactional offsets commits per producer. We need this because when the commit or abort
-   * marker comes in for a transaction, it is for a particular partition on the offsets topic and a particular producerId.
-   * We use this structure to quickly find the groups which need to be updated by the commit/abort marker. */
+     * marker comes in for a transaction, it is for a particular partition on the offsets topic and a particular producerId.
+     * We use this structure to quickly find the groups which need to be updated by the commit/abort marker. */
   private val openGroupsForProducer = mutable.HashMap[Long, mutable.Set[String]]()
 
   /* Track the epoch in which we (un)loaded group state to detect racing LeaderAndIsr requests */
@@ -88,7 +90,7 @@ class GroupMetadataManager(brokerId: Int,
     false
   }
 
-  def isGroupLocal(groupId: String): Boolean = config.getCoordinator(List(groupId)).head.equals(config.getCurrentNode)
+  def isGroupLocal(groupId: String): Boolean = topicManager.getCoordinator(List(groupId), CoordinatorType.GROUP).head.equals(config.getCurrentNode)
 
   def isGroupLoading(groupId: String): Boolean = false
 
@@ -862,11 +864,11 @@ class GroupMetadataManager(brokerId: Int,
       openGroupsForProducer.remove(producerId)
   }
 
-//  private def groupsBelongingToPartitions(producerId: Long, partitions: Set[Int]) = openGroupsForProducer synchronized {
-//    val (ownedGroups, _) = openGroupsForProducer.getOrElse(producerId, mutable.Set.empty[String])
-//      .partition(group => partitions.contains(partitionFor(group)))
-//    ownedGroups
-//  }
+  //  private def groupsBelongingToPartitions(producerId: Long, partitions: Set[Int]) = openGroupsForProducer synchronized {
+  //    val (ownedGroups, _) = openGroupsForProducer.getOrElse(producerId, mutable.Set.empty[String])
+  //      .partition(group => partitions.contains(partitionFor(group)))
+  //    ownedGroups
+  //  }
 
   private def removeGroupFromAllProducers(groupId: String): Unit = openGroupsForProducer synchronized {
     openGroupsForProducer.forKeyValue { (_, groups) =>
@@ -975,13 +977,13 @@ object GroupMetadataManager {
   //        .setGroup(groupId))
   //  }
 
-  /**
-   * Generates the payload for offset commit message from given offset and metadata
-   *
-   * @param offsetAndMetadata consumer's current offset and metadata
-   * @param metadataVersion   the api version
-   * @return payload for offset commit message
-   */
+//  /**
+//   * Generates the payload for offset commit message from given offset and metadata
+//   *
+//   * @param offsetAndMetadata consumer's current offset and metadata
+//   * @param metadataVersion   the api version
+//   * @return payload for offset commit message
+//   */
   //  def offsetCommitValue(offsetAndMetadata: OffsetAndMetadata,
   //                        metadataVersion: MetadataVersion): Array[Byte] = {
   //    val version =
@@ -998,15 +1000,15 @@ object GroupMetadataManager {
   //    )
   //  }
 
-  /**
-   * Generates the payload for group metadata message from given offset and metadata
-   * assuming the generation id, selected protocol, leader and member assignment are all available
-   *
-   * @param groupMetadata   current group metadata
-   * @param assignment      the assignment for the rebalancing generation
-   * @param metadataVersion the api version
-   * @return payload for offset commit message
-   */
+//  /**
+//   * Generates the payload for group metadata message from given offset and metadata
+//   * assuming the generation id, selected protocol, leader and member assignment are all available
+//   *
+//   * @param groupMetadata   current group metadata
+//   * @param assignment      the assignment for the rebalancing generation
+//   * @param metadataVersion the api version
+//   * @return payload for offset commit message
+//   */
   //  def groupMetadataValue(groupMetadata: GroupMetadata,
   //                         assignment: Map[String, Array[Byte]],
   //                         metadataVersion: MetadataVersion): Array[Byte] = {
@@ -1039,12 +1041,12 @@ object GroupMetadataManager {
   //      }.asJava))
   //  }
 
-  /**
-   * Decodes the offset messages' key
-   *
-   * @param buffer input byte-buffer
-   * @return an OffsetKey or GroupMetadataKey object from the message
-   */
+//  /**
+//   * Decodes the offset messages' key
+//   *
+//   * @param buffer input byte-buffer
+//   * @return an OffsetKey or GroupMetadataKey object from the message
+//   */
   //  def readMessageKey(buffer: ByteBuffer): BaseKey = {
   //    val version = buffer.getShort
   //    if (version >= OffsetCommitKey.LOWEST_SUPPORTED_VERSION && version <= OffsetCommitKey.HIGHEST_SUPPORTED_VERSION) {

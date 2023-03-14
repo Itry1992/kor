@@ -263,7 +263,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     if (version < FindCoordinatorRequest.MIN_BATCHED_VERSION) {
       val keyType = CoordinatorType.forId(findCoordinatorRequest.data().keyType())
       val key = findCoordinatorRequest.data().key()
-      val node = config.getCoordinator(List(key)).head
+      val node = topicManager.getCoordinator(List(key), keyType).head
       val responseBody = new FindCoordinatorResponse(
         new FindCoordinatorResponseData()
           .setErrorCode(Errors.NONE.code())
@@ -280,7 +280,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     //v4及之上支持此查找多个协调者
     val coordinators = findCoordinatorRequest.data.coordinatorKeys.asScala.map { key =>
       val keyType = CoordinatorType.forId(findCoordinatorRequest.data().keyType())
-      val node = config.getCoordinator(List(key)).head
+      val node = topicManager.getCoordinator(List(key), keyType).head
       new FindCoordinatorResponseData.Coordinator()
         .setKey(key)
         .setErrorCode(Errors.NONE.code())
@@ -1079,7 +1079,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     }).exceptionally((e) => {
       error(e.getMessage, e)
       tlqRequest.keySet.foreach(tp => {
-        topicPartitionToErrors += (tp -> TlqExceptionHelper.tlqExceptionConvert(e,tlqManager,tp.topic()).getError)
+        topicPartitionToErrors += (tp -> TlqExceptionHelper.tlqExceptionConvert(e, tlqManager, tp.topic()).getError)
       })
       null
     }).thenRun(() => sendResponseCallback(commitStatus.toMap))

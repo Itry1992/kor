@@ -1,14 +1,15 @@
 package com.tong.kafka.consumer;
 
+import com.tong.kafka.common.AdapterScheduler;
 import com.tong.kafka.common.CompletableFutureUtil;
 import com.tong.kafka.common.TopicPartition;
 import com.tong.kafka.common.header.internals.RecordHeader;
 import com.tong.kafka.common.protocol.ByteBufferAccessor;
 import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.common.record.*;
+import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.manager.ITlqManager;
 import com.tong.kafka.manager.vo.TlqBrokerNode;
-import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.produce.vo.KafkaRecordAttr;
 import com.tongtech.client.common.SystemConfig;
 import com.tongtech.client.message.Message;
@@ -19,14 +20,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public abstract class AbsTlqConsumer implements ITlqConsumer {
     private volatile long EXPECTED_REQUEST_CONSUMPTION_TIME = 3;
     protected ITlqManager manager;
-
-    public AbsTlqConsumer(ITlqManager manager) {
+    private AdapterScheduler scheduler;
+    public AbsTlqConsumer(ITlqManager manager,AdapterScheduler scheduler) {
         this.manager = manager;
     }
 
@@ -58,7 +58,7 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
      */
     public CompletableFuture<MemoryRecords> pullMessageChain(TlqBrokerNode node, String topic, long offset, int maxWaitTime, int batchNum, int maxBate, int minByte, List<MessageExt> lastMessages, long beginTimes) {
         CompletableFuture<List<MessageExt>> pullMessageResult = pullMessage(node, offset, maxWaitTime, topic , batchNum);
-        CompletableFutureUtil.completeTimeOut(pullMessageResult, lastMessages, maxWaitTime, TimeUnit.MILLISECONDS);
+        CompletableFutureUtil.completeTimeOut(pullMessageResult, lastMessages, maxWaitTime,scheduler);
         return pullMessageResult.thenCompose(messages -> {
             if (messages.isEmpty()) return CompletableFuture.completedFuture(MemoryRecords.EMPTY);
             MessageExt last = messages.get(messages.size() - 1);
