@@ -155,9 +155,9 @@ public class AdapterConsumer extends AbsTlqConsumer {
     }
 
     @Override
-    public CompletableFuture<Map<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, TlqOffsetRequest> requestMap) {
+    public CompletableFuture<Map<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, AdapterOffsetRequest> requestMap) {
         //根据主题分区对应的brokerId进行分组，方便后续对不同的broker发送消息
-        Map<Integer, Set<TlqOffsetRequest>> brokerIdtoReq = requestMap.values().stream().collect(Collectors.groupingBy((r) -> manager.getTlqBrokerNode(r.getTopicPartition()).map(TlqBrokerNode::getBrokerId).orElse(INVALID_TLQ_BROKER_ID), Collectors.toSet()));
+        Map<Integer, Set<AdapterOffsetRequest>> brokerIdtoReq = requestMap.values().stream().collect(Collectors.groupingBy((r) -> manager.getTlqBrokerNode(r.getTopicPartition()).map(TlqBrokerNode::getBrokerId).orElse(INVALID_TLQ_BROKER_ID), Collectors.toSet()));
         Optional<TLQTopicPullConsumer> optionalConsumer = pool.getConsumer();
         if (!optionalConsumer.isPresent()) {
             CompletableFuture<Map<TopicPartition, TopicPartitionOffsetData>> result = new CompletableFuture<>();
@@ -167,7 +167,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
         TLQTopicPullConsumer consumer = optionalConsumer.get();
         ConcurrentHashMap<TopicPartition, TopicPartitionOffsetData> resultMap = new ConcurrentHashMap<>();
         Stream<CompletableFuture<?>> futureStream = brokerIdtoReq.entrySet().stream().map(entry -> {
-            Set<TlqOffsetRequest> offsetRequests = entry.getValue();
+            Set<AdapterOffsetRequest> offsetRequests = entry.getValue();
             Integer brokerId = entry.getKey();
             if (Objects.equals(brokerId, INVALID_TLQ_BROKER_ID)) {
                 offsetRequests.forEach(req -> {
@@ -177,11 +177,11 @@ public class AdapterConsumer extends AbsTlqConsumer {
                 return CompletableFuture.completedFuture(true);
             }
             //按type再次分组，分别发起请求
-            Map<TlqOffsetRequest.Type, Set<TlqOffsetRequest>> typeToReqs = offsetRequests.stream().collect(Collectors.groupingBy(TlqOffsetRequest::getType, Collectors.toSet()));
+            Map<AdapterOffsetRequest.Type, Set<AdapterOffsetRequest>> typeToReqs = offsetRequests.stream().collect(Collectors.groupingBy(AdapterOffsetRequest::getType, Collectors.toSet()));
             BrokerSelector brokerSelector = new BrokerSelector();
             brokerSelector.setBrokerId(brokerId);
             CompletableFuture<?>[] futures = typeToReqs.entrySet().stream().map(typeToReq -> {
-                Set<TlqOffsetRequest> requestSet = typeToReq.getValue();
+                Set<AdapterOffsetRequest> requestSet = typeToReq.getValue();
                 CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = offsetQuery(typeToReq, consumer, brokerSelector);
                 return future.handle((res, err) -> {
                     if (err != null) {
@@ -290,10 +290,10 @@ public class AdapterConsumer extends AbsTlqConsumer {
     }
 
 
-    private CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> offsetQuery(Map.Entry<TlqOffsetRequest.Type, Set<TlqOffsetRequest>> en, TLQTopicPullConsumer consumer, BrokerSelector brokerSelector) {
-        TlqOffsetRequest.Type type = en.getKey();
+    private CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> offsetQuery(Map.Entry<AdapterOffsetRequest.Type, Set<AdapterOffsetRequest>> en, TLQTopicPullConsumer consumer, BrokerSelector brokerSelector) {
+        AdapterOffsetRequest.Type type = en.getKey();
         List<String> topics = en.getValue().stream().map(r -> r.getTopicPartition().topic()).collect(Collectors.toList());
-        if (type == TlqOffsetRequest.Type.Start) {
+        if (type == AdapterOffsetRequest.Type.Start) {
             CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = consumer.beginningOffsets(consumer.getDomain(), brokerSelector, topics, 3000)
                     .thenApply(res ->
                             res.entrySet().stream()
@@ -301,7 +301,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
                                             (e) -> new OffsetAndTimestamp(type.getValue(), e.getValue()))));
             return future;
         }
-        if (type == TlqOffsetRequest.Type.End) {
+        if (type == AdapterOffsetRequest.Type.End) {
             CompletableFuture<Map<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> future = consumer.endOffsets(consumer.getDomain(), brokerSelector, topics, 3000)
                     .thenApply(res ->
                             res.entrySet().stream()

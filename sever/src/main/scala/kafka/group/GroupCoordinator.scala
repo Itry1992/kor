@@ -1656,7 +1656,7 @@ object GroupCoordinator {
   val DeadGroup = GroupSummary(Dead.toString, NoProtocolType, NoProtocol, NoMembers)
   val NewMemberJoinTimeoutMs: Int = 5 * 60 * 1000
 
-  def apply(config: AdapterConfig,
+  def apply(config: KAdapterConfig,
             time: Time,
             topicManager: AdapterTopicManager
            ): GroupCoordinator = {
@@ -1666,7 +1666,7 @@ object GroupCoordinator {
   }
 
 
-  def apply(config: AdapterConfig,
+  def apply(config: KAdapterConfig,
             heartbeatPurgatory: DelayedOperationPurgatory[DelayedHeartbeat],
             rebalancePurgatory: DelayedOperationPurgatory[DelayedRebalance],
             time: Time,

@@ -8,6 +8,15 @@ version '1.0-SNAPSHOT'
 allprojects {
     //指定仓库
     repositories {
+        mavenLocal()
+        maven {
+            credentials {
+                username 'admin'
+                password 'aptx4869'
+            }
+            setAllowInsecureProtocol(true)
+            url 'http://10.10.82.106:8088/repository/maven-public/'
+        }
         maven {
             url 'https://maven.aliyun.com/repository/public/'
         }

@@ -17,7 +17,7 @@ import com.tong.kafka.common.requests._
 import com.tong.kafka.common.utils.{BufferSupplier, Time}
 import com.tong.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import com.tong.kafka.consumer.ITlqConsumer
-import com.tong.kafka.consumer.vo.{CommitOffsetRequest, TlqOffsetRequest, TopicPartitionOffsetData}
+import com.tong.kafka.consumer.vo.{CommitOffsetRequest, AdapterOffsetRequest, TopicPartitionOffsetData}
 import com.tong.kafka.exception.{CommonKafkaException, TlqExceptionHelper}
 import com.tong.kafka.manager.ITlqManager
 import com.tong.kafka.manager.vo.TopicMetaData
@@ -40,7 +40,7 @@ import scala.jdk.CollectionConverters._
 class AdapterRequestHandler(val requestChannel: RequestChannel,
                             apiVersionManager: ApiVersionManager,
                             time: Time,
-                            config: AdapterConfig,
+                            config: KAdapterConfig,
                             tlqManager: ITlqManager,
                             topicManager: AdapterTopicManager,
                             tlqProduce: ITlqProduce,
@@ -678,11 +678,11 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
         .setPartitionIndex(partitionIndex)
     }
 
-    val tlqRequest = mutable.Map[TopicPartition, TlqOffsetRequest]()
+    val tlqRequest = mutable.Map[TopicPartition, AdapterOffsetRequest]()
     offsetRequest.data().topics().forEach((topic) => {
       topic.partitions().forEach(partitionData => {
         val tp = new TopicPartition(topic.name(), partitionData.partitionIndex());
-        val offsetRequest = new TlqOffsetRequest(tp, partitionData.timestamp())
+        val offsetRequest = new AdapterOffsetRequest(tp, partitionData.timestamp())
         tlqRequest += (tp -> offsetRequest)
       })
     })

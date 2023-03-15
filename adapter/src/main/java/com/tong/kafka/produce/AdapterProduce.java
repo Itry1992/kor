@@ -39,6 +39,7 @@ public class AdapterProduce extends AbsTlqProduce {
         brokerSelector.setBrokerId(tlqBrokerNode.getBrokerId());
         CompletableFuture<SendResult> completableFuture = new CompletableFuture<>();
         try {
+            //TODO 路由拉取失败未返回
             tlqTopicProducer.sendBatch(messages, brokerSelector, new SendBatchCallback() {
                 @Override
                 public void onSuccess(SendBatchResult sendBatchResult) {

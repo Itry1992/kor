@@ -5,7 +5,7 @@ import com.tong.kafka.common.protocol.Errors;
 import com.tong.kafka.common.record.MemoryRecords;
 import com.tong.kafka.consumer.vo.CommitOffsetRequest;
 import com.tong.kafka.consumer.vo.ConsumerGroupOffsetData;
-import com.tong.kafka.consumer.vo.TlqOffsetRequest;
+import com.tong.kafka.consumer.vo.AdapterOffsetRequest;
 import com.tong.kafka.consumer.vo.TopicPartitionOffsetData;
 
 import java.util.List;
@@ -27,7 +27,7 @@ public interface ITlqConsumer {
      * @param requestMap 主题分区->查询信息
      * @return 主题分区->offset
      */
-    CompletableFuture<Map<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, TlqOffsetRequest> requestMap);
+    CompletableFuture<Map<TopicPartition, TopicPartitionOffsetData>> getTimestampOffset(Map<TopicPartition, AdapterOffsetRequest> requestMap);
 
     /**
      * 向主题分区拉取信息，tlq目前不支持多主题拉取

@@ -32,14 +32,14 @@ trait Server {
   def awaitShutdown(): Unit
 }
 
-class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val config: AdapterConfig) extends Server with Logging {
+class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val config: KAdapterConfig) extends Server with Logging {
   var quotaManagers: QuotaFactory.QuotaManagers = null
-  private val startupComplete = new AtomicBoolean(false)
-  private val isShuttingDown = new AtomicBoolean(false)
-  private val isStartingUp = new AtomicBoolean(false)
-  @volatile private var _brokerState: BrokerState = BrokerState.NOT_RUNNING
-  private var shutdownLatch = new CountDownLatch(1)
-  private var logContext: LogContext = null
+  protected val startupComplete = new AtomicBoolean(false)
+  protected val isShuttingDown = new AtomicBoolean(false)
+  protected val isStartingUp = new AtomicBoolean(false)
+  @volatile protected var _brokerState: BrokerState = BrokerState.NOT_RUNNING
+  protected var shutdownLatch = new CountDownLatch(1)
+  protected var logContext: LogContext = null
   var socketServer: SocketServer = null
   var metrics: Metrics = null
   var requestHandlerPool: KafkaRequestHandlerPool = null

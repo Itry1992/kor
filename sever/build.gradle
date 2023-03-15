@@ -23,4 +23,5 @@ dependencies {
     implementation libs.jacksonDataformatCsv
     implementation libs.jacksonJDK8Datatypes
     implementation fileTree(dir: '../libs', includes: ['*.jar'])
+    testImplementation 'junit:junit:4.13.1'
 }

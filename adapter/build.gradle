@@ -1,6 +1,8 @@
+
+
 dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.8.1")
-    implementation fileTree(dir: '../libs', includes: ['*.jar'])
+    implementation("com.tongtech.client:tongtech-client:2.0.1.0")
     implementation project(":base")
 }
 

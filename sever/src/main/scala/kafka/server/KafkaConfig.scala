@@ -1523,7 +1523,7 @@ object KafkaConfig {
    */
   def populateSynonyms(input: util.Map[_, _]): util.Map[Any, Any] = {
     val output = new util.HashMap[Any, Any](input)
-    val nodeId = output.get(AdapterConfig.AdapterNodeId)
+    val nodeId = output.get(KAdapterConfig.AdapterNodeId)
     output.put(KafkaConfig.BrokerIdProp, nodeId);
     output.put(KafkaConfig.NodeIdProp, nodeId)
     //    if (brokerId == null && nodeId != null) {

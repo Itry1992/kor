@@ -26,7 +26,8 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
     private volatile long EXPECTED_REQUEST_CONSUMPTION_TIME = 3;
     protected ITlqManager manager;
     private AdapterScheduler scheduler;
-    public AbsTlqConsumer(ITlqManager manager,AdapterScheduler scheduler) {
+
+    public AbsTlqConsumer(ITlqManager manager, AdapterScheduler scheduler) {
         this.manager = manager;
     }
 
@@ -57,8 +58,8 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
      * @return
      */
     public CompletableFuture<MemoryRecords> pullMessageChain(TlqBrokerNode node, String topic, long offset, int maxWaitTime, int batchNum, int maxBate, int minByte, List<MessageExt> lastMessages, long beginTimes) {
-        CompletableFuture<List<MessageExt>> pullMessageResult = pullMessage(node, offset, maxWaitTime, topic , batchNum);
-        CompletableFutureUtil.completeTimeOut(pullMessageResult, lastMessages, maxWaitTime,scheduler);
+        CompletableFuture<List<MessageExt>> pullMessageResult = pullMessage(node, offset, maxWaitTime, topic, batchNum);
+        CompletableFutureUtil.completeTimeOut(pullMessageResult, lastMessages, maxWaitTime, scheduler);
         return pullMessageResult.thenCompose(messages -> {
             if (messages.isEmpty()) return CompletableFuture.completedFuture(MemoryRecords.EMPTY);
             MessageExt last = messages.get(messages.size() - 1);
@@ -93,10 +94,15 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
         MemoryRecordsBuilder builder = MemoryRecords.builder(buffer, RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, TimestampType.LOG_APPEND_TIME, baseOffset, headMessage.getTime(), RecordBatch.NO_PRODUCER_ID, (short) RecordBatch.NO_PARTITION_LEADER_EPOCH, 0, false, false, RecordBatch.NO_PARTITION_LEADER_EPOCH);
 
         for (MessageExt message : messages) {
-            SimpleRecord record = messageToSimpleRecord(headMessage);
-            if (builder.hasRoomFor(message.getTime(), record.key(), record.value(), record.headers()))
-                builder.append(message.getTime(), record.key(), record.value(), record.headers());
-            else break;
+            try {
+                SimpleRecord record = messageToSimpleRecord(headMessage);
+                if (builder.hasRoomFor(message.getTime(), record.key(), record.value(), record.headers()))
+                    builder.append(message.getTime(), record.key(), record.value(), record.headers());
+                else break;
+            } catch (Exception e) {
+                //todo error handler
+                throw new RuntimeException(e);
+            }
         }
         builder.close();
         return builder.build();

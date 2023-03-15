@@ -21,7 +21,7 @@ import com.tong.kafka.common.TopicPartition
 import com.tong.kafka.common.protocol.Errors
 import com.tong.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import com.tong.kafka.common.utils.Time
-import kafka.server.{AdapterConfig, AdapterTopicManager, RequestLocal}
+import kafka.server.{AdapterTopicManager, KAdapterConfig, RequestLocal}
 import kafka.utils.CoreUtils.inLock
 import kafka.utils.Implicits._
 import kafka.utils._
@@ -33,7 +33,7 @@ import scala.collection._
 
 class GroupMetadataManager(brokerId: Int,
                            time: Time,
-                           config: AdapterConfig,
+                           config: KAdapterConfig,
                            topicManager: AdapterTopicManager
                           ) extends Logging {
   val DefaultOffsetsRetentionCheckIntervalMs = 600000L
@@ -977,13 +977,13 @@ object GroupMetadataManager {
   //        .setGroup(groupId))
   //  }
 
-//  /**
-//   * Generates the payload for offset commit message from given offset and metadata
-//   *
-//   * @param offsetAndMetadata consumer's current offset and metadata
-//   * @param metadataVersion   the api version
-//   * @return payload for offset commit message
-//   */
+  //  /**
+  //   * Generates the payload for offset commit message from given offset and metadata
+  //   *
+  //   * @param offsetAndMetadata consumer's current offset and metadata
+  //   * @param metadataVersion   the api version
+  //   * @return payload for offset commit message
+  //   */
   //  def offsetCommitValue(offsetAndMetadata: OffsetAndMetadata,
   //                        metadataVersion: MetadataVersion): Array[Byte] = {
   //    val version =
@@ -1000,15 +1000,15 @@ object GroupMetadataManager {
   //    )
   //  }
 
-//  /**
-//   * Generates the payload for group metadata message from given offset and metadata
-//   * assuming the generation id, selected protocol, leader and member assignment are all available
-//   *
-//   * @param groupMetadata   current group metadata
-//   * @param assignment      the assignment for the rebalancing generation
-//   * @param metadataVersion the api version
-//   * @return payload for offset commit message
-//   */
+  //  /**
+  //   * Generates the payload for group metadata message from given offset and metadata
+  //   * assuming the generation id, selected protocol, leader and member assignment are all available
+  //   *
+  //   * @param groupMetadata   current group metadata
+  //   * @param assignment      the assignment for the rebalancing generation
+  //   * @param metadataVersion the api version
+  //   * @return payload for offset commit message
+  //   */
   //  def groupMetadataValue(groupMetadata: GroupMetadata,
   //                         assignment: Map[String, Array[Byte]],
   //                         metadataVersion: MetadataVersion): Array[Byte] = {
@@ -1041,12 +1041,12 @@ object GroupMetadataManager {
   //      }.asJava))
   //  }
 
-//  /**
-//   * Decodes the offset messages' key
-//   *
-//   * @param buffer input byte-buffer
-//   * @return an OffsetKey or GroupMetadataKey object from the message
-//   */
+  //  /**
+  //   * Decodes the offset messages' key
+  //   *
+  //   * @param buffer input byte-buffer
+  //   * @return an OffsetKey or GroupMetadataKey object from the message
+  //   */
   //  def readMessageKey(buffer: ByteBuffer): BaseKey = {
   //    val version = buffer.getShort
   //    if (version >= OffsetCommitKey.LOWEST_SUPPORTED_VERSION && version <= OffsetCommitKey.HIGHEST_SUPPORTED_VERSION) {
