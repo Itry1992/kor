@@ -206,9 +206,9 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
               val attr = new KafkaRecordAttr(batch.magic())
               try {
                 Option(tlqProduce.sendBatch(topicPartition, r.asJava, attr, produceRequest.timeout())
-                  .whenComplete((sendRes, throwable) => {
+                  .handle((sendRes, throwable) => {
                     if (throwable != null) {
-                      error(throwable.getMessage, throwable)
+                      error(s"send message to htp error : ${throwable.getMessage},$throwable")
                       throwable match {
                         case e: CommonKafkaException => responseStatus += (topicPartition -> new PartitionResponse(e.getError,
                           throwable.getMessage))
@@ -364,6 +364,8 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
           topicsMetaData.map(t => t._2).asJava,
           clusterAuthorizedOperations
         )
+        trace("Sending metadata response %s for correlation id %d to client %s."
+          .format(response, request.header.correlationId, request.header.clientId))
         requestChannel.sendResponse(request, response, None)
         CompletableFuture.completedFuture(null)
       })
@@ -639,7 +641,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
     partitionsFuture.thenCompose(partitions => {
       val committedOffsetMapFuture = tlqConsumer.getCommittedOffset(groupId, partitions)
       committedOffsetMapFuture.thenAccept(groupData => {
-        var response = if (Option(groupData.getError).getOrElse(Errors.NONE) != Errors.NONE) {
+        val response = if (Option(groupData.getError).getOrElse(Errors.NONE) != Errors.NONE) {
           createResponse(0, groupData.getError, Map.empty)
         } else {
           val resultMap = mutable.Map.empty[TopicPartition, OffsetFetchResponse.PartitionData]

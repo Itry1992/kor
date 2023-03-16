@@ -7,7 +7,6 @@ import com.tong.kafka.common.security.scram.internals.ScramMechanism
 import com.tong.kafka.common.security.token.delegation.internals.DelegationTokenCache
 import com.tong.kafka.common.utils.Time
 import com.tong.kafka.common.{AdapterSchedulerImpl, Node}
-import com.tong.kafka.consumer.AdapterConsumer
 import com.tong.kafka.produce.AdapterProduce
 import com.tong.kafka.server.common.BrokerState
 import com.tong.kafka.tlq.TlqPool
@@ -46,7 +45,8 @@ class MockSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, override va
       tlqPool = new TlqPool(adapterScheduler, config)
       //      val tlqManager = new AdapterManager(tlqPool, config.getAdapterTopicMetadataCacheTimeMs)
       val tlqProduce = new AdapterProduce(tlqPool, tlqManager)
-      val tlqConsumer = new AdapterConsumer(tlqManager, tlqPool, adapterScheduler)
+      val tlqConsumer = new MockConsumer(tlqManager, tlqPool, adapterScheduler)
+      //      val tlqConsumer = new AdapterConsumer(tlqManager, tlqPool, adapterScheduler)
       val coordinator = GroupCoordinator(config, Time.SYSTEM, topicManager)
       coordinator.startup()
       quotaManagers = QuotaFactory.instantiate(config, metrics, time, "quota_managers")
@@ -66,6 +66,7 @@ class MockSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, override va
       requestHandlerPool = new KafkaRequestHandlerPool(brokerId = brokerId, requestChannel = socketServer.requestChannel, apis = apiHandler, time, numThreads = config.numIoThreads, requestHandlerAvgIdleMetricName = s"requestHandlerAvgIdleMetric", logAndThreadNamePrefix = s"${SampleAcceptor.ThreadPrefix}")
       socketServer.enableRequestProcessing()
       _brokerState = BrokerState.RUNNING
+      isStartingUp.set(false)
       startupComplete.set(true)
     }
   }

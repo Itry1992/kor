@@ -94,6 +94,7 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
       socketServer.enableRequestProcessing()
       _brokerState = BrokerState.RUNNING
       startupComplete.set(true)
+      isStartingUp.set(false)
     }
   }
 

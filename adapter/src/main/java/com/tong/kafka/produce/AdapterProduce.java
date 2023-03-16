@@ -16,11 +16,14 @@ import com.tongtech.client.producer.SendBatchCallback;
 import com.tongtech.client.producer.SendBatchResult;
 import com.tongtech.client.producer.SendStatus;
 import com.tongtech.client.producer.topic.TLQTopicProducer;
+import com.tongtech.slf4j.Logger;
+import com.tongtech.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 public class AdapterProduce extends AbsTlqProduce {
+    Logger logger = LoggerFactory.getLogger(AdapterProduce.class);
     private final TlqPool tlqPool;
 
 
@@ -39,23 +42,27 @@ public class AdapterProduce extends AbsTlqProduce {
         brokerSelector.setBrokerId(tlqBrokerNode.getBrokerId());
         CompletableFuture<SendResult> completableFuture = new CompletableFuture<>();
         try {
-            //TODO 路由拉取失败未返回
+            logger.trace("send batch message to broker: {}, topic: {} , batch size: {} ", brokerSelector.getBrokerId(), messages.get(0).getTopicOrQueue(), messages.size());
             tlqTopicProducer.sendBatch(messages, brokerSelector, new SendBatchCallback() {
                 @Override
                 public void onSuccess(SendBatchResult sendBatchResult) {
-                    if (sendBatchResult.getSendStatus().equals(SendStatus.SEND_OK))
+                    if (sendBatchResult.getSendStatus().equals(SendStatus.SEND_OK)) {
+                        logger.trace("send batch message to broker {} success", brokerSelector.getBrokerId());
                         completableFuture.complete(new SendResult().setLogAppendTime(System.currentTimeMillis()));
-                    else {
+                    } else {
+                        logger.error("send batch message to broker {} fail by unknown error");
                         completableFuture.completeExceptionally(new CommonKafkaException(Errors.LEADER_NOT_AVAILABLE));
                     }
                 }
 
                 @Override
                 public void onException(Throwable throwable) {
+                    logger.error("send batch message to broker {} fail due to error: {}", brokerSelector.getBrokerId(), throwable);
                     completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(throwable, manager, tp.topic()));
                 }
             }, timeout);
         } catch (Exception e) {
+            logger.error("send batch message to broker {} fail due to error: {}", brokerSelector.getBrokerId(), e);
             completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e, manager, tp.topic()));
         }
         return completableFuture;

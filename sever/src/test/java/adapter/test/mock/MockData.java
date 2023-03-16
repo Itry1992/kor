@@ -14,14 +14,14 @@ public class MockData {
         int[] ints = {1000, 1001, 1002};
         tlqBrokerNodes = Arrays.stream(ints).mapToObj(i -> {
             TlqBrokerNode tlqBrokerNode = new TlqBrokerNode();
-            tlqBrokerNode.setBrokerId(i);
+            tlqBrokerNode.setBrokerId(1000);
             tlqBrokerNode.setPort("9999");
             tlqBrokerNode.setAddr("localhost");
             return tlqBrokerNode;
         }).collect(Collectors.toList());
         topics = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
-            topics.add("topic_test" + i);
+            topics.add("topic" + i);
         }
     }
 

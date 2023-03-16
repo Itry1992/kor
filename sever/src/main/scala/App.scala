@@ -1,6 +1,6 @@
 import com.tong.kafka.common.utils.Utils
 import com.tongtech.client.remoting.common.NettySystemConfig
-import kafka.server.{KAdapterConfig, AdapterSever}
+import kafka.server.{AdapterSever, KAdapterConfig}
 
 import java.util.Properties
 

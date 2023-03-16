@@ -56,21 +56,26 @@ public class AdapterConsumer extends AbsTlqConsumer {
         directPullData.setBrokerId(node.getBrokerId());
         directPullData.setTopicName(topic);
         try {
+            logger.trace("pull message from broker:{}, topic:{}, offset :{} ", directPullData.getBrokerId(), directPullData.getTopicName(), offset);
             pullConsumer.pullMessage(directPullData, offset, batchNum, new PullCallback() {
                 @Override
                 public void onSuccess(PullResult pullResult) {
                     if (pullResult.getPullStatus().equals(PullStatus.FOUND) && !pullResult.getMsgFoundList().isEmpty()) {
+                        logger.trace("pull message from broker:{}, topic:{}, offset :{} success , pull message size:{} ", directPullData.getBrokerId(), directPullData.getTopicName(), offset, pullResult.getMsgFoundList().size());
                         completableFuture.complete(pullResult.getMsgFoundList());
                     }
+                    logger.trace("pull message from broker:{}, topic:{}, offset :{} success , but have no new message , pull status :{} ", directPullData.getBrokerId(), directPullData.getTopicName(), offset, pullResult.getPullStatus());
                     completableFuture.complete(Collections.emptyList());
                 }
 
                 @Override
                 public void onException(Throwable e) {
+                    logger.error("pull message from broker:{}, topic:{}, offset :{} fail ,due to {}", directPullData.getBrokerId(), directPullData.getTopicName(), offset, e);
                     completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e, manager, topic));
                 }
             }, timeOut);
         } catch (TLQClientException | RemotingException | TLQBrokerException | InterruptedException e) {
+            logger.error("pull message from broker:{}, topic:{}, offset :{} fail ,due to {}", directPullData.getBrokerId(), directPullData.getTopicName(), offset, e);
             completableFuture.completeExceptionally(TlqExceptionHelper.tlqExceptionConvert(e, manager, topic));
         }
         return completableFuture;

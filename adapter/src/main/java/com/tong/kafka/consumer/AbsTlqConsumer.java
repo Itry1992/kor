@@ -29,6 +29,7 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
 
     public AbsTlqConsumer(ITlqManager manager, AdapterScheduler scheduler) {
         this.manager = manager;
+        this.scheduler = scheduler;
     }
 
     public CompletableFuture<MemoryRecords> pullMessage(TopicPartition topicPartition, long offset, int maxWaitTime, int batchNum, int maxByte, int minByte) {
@@ -69,7 +70,8 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
             int nextMaxWait = maxWaitTime - (int) useTime;
             EXPECTED_REQUEST_CONSUMPTION_TIME = (useTime + EXPECTED_REQUEST_CONSUMPTION_TIME) / 2;
             if (memoryRecords.sizeInBytes() < minByte && System.currentTimeMillis() - beginTimes < nextMaxWait - EXPECTED_REQUEST_CONSUMPTION_TIME) {
-                return pullMessageChain(node, topic, last.getCommitLogOffset(), nextMaxWait, Math.min(2 * batchNum, SystemConfig.TLQ9_MAX_PULL_NUM), maxBate, minByte, messages, System.currentTimeMillis());
+                long netOffset = last.getConsumeQueueOffset() + 1;
+                return pullMessageChain(node, topic, netOffset, nextMaxWait, Math.min(2 * batchNum, SystemConfig.TLQ9_MAX_PULL_NUM), maxBate, minByte, messages, System.currentTimeMillis());
             } else {
                 return CompletableFuture.completedFuture(memoryRecords);
             }
@@ -87,7 +89,7 @@ public abstract class AbsTlqConsumer implements ITlqConsumer {
         }).collect(Collectors.toList());
         if (messages.isEmpty()) return MemoryRecords.EMPTY;
         MessageExt headMessage = messages.get(0);
-        long baseOffset = headMessage.getCommitLogOffset();
+        long baseOffset = headMessage.getConsumeQueueOffset();
         SimpleRecord headRecord = messageToSimpleRecord(headMessage);
         int size = Math.max(maxByte, AbstractRecords.estimateSizeInBytesUpperBound(RecordBatch.MAGIC_VALUE_V2, CompressionType.NONE, headRecord.key(), headRecord.value(), headRecord.headers()));
         ByteBuffer buffer = ByteBuffer.allocate(size);

@@ -28,7 +28,7 @@ public class TlqFactory {
         try {
             pullConsumer.setNamesrvAddr(namesrvAddr);
             pullConsumer.setDomain(domain);
-            pullConsumer.subscribe("topic1");
+            pullConsumer.subscribe("topic0");
         } catch (TLQClientException e) {
             logger.error(e.getErrorMessage(), e);
             throw new RuntimeException(e);

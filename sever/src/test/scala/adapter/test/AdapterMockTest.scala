@@ -1,6 +1,7 @@
 package adapter.test
 
 import adapter.test.mock.MockData
+import com.tong.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer, OffsetResetStrategy}
 import com.tong.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord, RecordMetadata}
 import com.tong.kafka.common.record.CompressionType
 import com.tong.kafka.common.serialization.StringSerializer
@@ -9,9 +10,11 @@ import com.tongtech.client.remoting.common.NettySystemConfig
 import kafka.server.KAdapterConfig
 import org.junit.{After, Before, Test}
 
+import java.time.Duration
 import java.util
 import java.util.Properties
 import java.util.concurrent.{ExecutionException, Future}
+import scala.jdk.CollectionConverters._
 
 class AdapterMockTest {
   private[test] var mockSever: Option[MockSever] = None
@@ -23,6 +26,7 @@ class AdapterMockTest {
   private[test] val topic: String = mockData.topics.get(0)
 
   @Before def startApp(): Unit = {
+
     val properties: Properties = new Properties
     properties.setProperty(KAdapterConfig.AdapterNodeId, "0")
     properties.setProperty(KAdapterConfig.AdapterListenAddress, severHost)
@@ -50,12 +54,12 @@ class AdapterMockTest {
     props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, CompressionType.ZSTD.name)
     try {
       val producer: KafkaProducer[String, String] = new KafkaProducer[String, String](props)
-      try for (i <- 0 until 10000) {
+      try for (i <- 0 until 1000) {
         val record: ProducerRecord[String, String] = new ProducerRecord[String, String](topic, "999", "abc")
         val send: Future[RecordMetadata] = producer.send(record)
         if (i % 5 == 0) {
           val recordMetadata: RecordMetadata = send.get
-          System.out.println(recordMetadata.toString)
+          System.out.println("send success" + i + " p,t,o: " + recordMetadata.partition() + recordMetadata.topic() + recordMetadata.offset())
         }
       }
       catch {
@@ -67,6 +71,30 @@ class AdapterMockTest {
         if (producer != null) producer.close()
       }
     }
+  }
+
+  @Test def consumerTest(): Unit = {
+    val props = new Properties
+    props.put("bootstrap.servers", "localhost:9999")
+    props.put("group.id", "tt_ttx")
+    props.put("enable.auto.commit", true)
+    props.put("auto.commit.interval.ms", "10000")
+    props.put("key.deserializer", "com.tong.kafka.common.serialization.StringDeserializer")
+    props.put("value.deserializer", "com.tong.kafka.common.serialization.StringDeserializer")
+    props.put("max.poll.records", 10)
+    props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, OffsetResetStrategy.EARLIEST.toString)
+    val consumer = new KafkaConsumer[String, String](props)
+    consumer.subscribe(List(topic).asJava)
+    var i = 0
+    while (i < 1000) {
+      val record = consumer.poll(Duration.ofSeconds(1))
+      record.iterator().forEachRemaining(e => {
+        i += 1
+        println(s"pull success $e , offset ${e.offset()} ")
+      })
+    }
+
+    consumer.close()
   }
 
   @After def stop(): Unit = {

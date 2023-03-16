@@ -11,17 +11,16 @@ dependencies {
     implementation project(':server_common')
     implementation project(":adapter")
     implementation libs.scalaLibrary
-    implementation libs.scalaLogging
+//    implementation libs.scalaLogging
     implementation libs.scalaCollectionCompat
     implementation libs.scalaJava8Compat
     implementation libs.scalaReflect
     implementation libs.scalaLogging
     implementation libs.metrics_core
-    implementation libs.slf4japi
     implementation libs.jacksonDatabind
     implementation libs.jacksonModuleScala
     implementation libs.jacksonDataformatCsv
     implementation libs.jacksonJDK8Datatypes
-    implementation fileTree(dir: '../libs', includes: ['*.jar'])
+    implementation libs.tongtechclinet
     testImplementation 'junit:junit:4.13.1'
 }
