@@ -902,7 +902,7 @@ class AdapterRequestHandler(val requestChannel: RequestChannel,
           }
         }
 
-        // Prepare fetch response from converted data
+        // Prepare fetch response from converted payload
         val response =
           FetchResponse.of(unconvertedFetchResponse.error, throttleTimeMs, unconvertedFetchResponse.sessionId, convertedData)
 

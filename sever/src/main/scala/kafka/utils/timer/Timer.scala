@@ -71,7 +71,7 @@ class SystemTimer(executorName: String,
     delayQueue
   )
 
-  // Locks used to protect data structures while ticking
+  // Locks used to protect payload structures while ticking
   private[this] val readWriteLock = new ReentrantReadWriteLock()
   private[this] val readLock = readWriteLock.readLock()
   private[this] val writeLock = readWriteLock.writeLock()

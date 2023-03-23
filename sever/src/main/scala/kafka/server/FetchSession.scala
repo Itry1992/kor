@@ -129,15 +129,15 @@ class CachedPartition(var topic: String,
     *
     * This function should be called while holding the appropriate session lock.
     *
-    * @param respData partition data
-    * @param updateResponseData if set to true, update this CachedPartition with new request and response data.
+    * @param respData partition payload
+    * @param updateResponseData if set to true, update this CachedPartition with new request and response payload.
     * @return True if this partition should be included in the response; false if it can be omitted.
     */
   def maybeUpdateResponseData(respData: FetchResponseData.PartitionData, updateResponseData: Boolean): Boolean = {
-    // Check the response data.
+    // Check the response payload.
     var mustRespond = false
     if (FetchResponse.recordsSize(respData) > 0) {
-      // Partitions with new data are always included in the response.
+      // Partitions with new payload are always included in the response.
       mustRespond = true
     }
     if (highWatermark != respData.highWatermark) {
@@ -266,7 +266,7 @@ class FetchSession(val id: Int,
 
   type TL = util.ArrayList[TopicIdPartition]
 
-  // Update the cached partition data based on the request.
+  // Update the cached partition payload based on the request.
   def update(fetchData: FetchSession.REQ_MAP,
              toForget: util.List[TopicIdPartition],
              reqMetadata: JFetchMetadata): (TL, TL, TL) = synchronized {
@@ -321,8 +321,8 @@ trait FetchContext extends Logging {
   def getResponseSize(updates: FetchSession.RESP_MAP, versionId: Short): Int
 
   /**
-    * Updates the fetch context with new partition information.  Generates response data.
-    * The response data may require subsequent down-conversion.
+    * Updates the fetch context with new partition information.  Generates response payload.
+    * The response payload may require subsequent down-conversion.
     */
   def updateAndGenerateResponseData(updates: FetchSession.RESP_MAP): FetchResponse
 
@@ -359,7 +359,7 @@ class SessionErrorContext(val error: Errors,
 /**
   * The fetch context for a sessionless fetch request.
   *
-  * @param fetchData          The partition data from the fetch request.
+  * @param fetchData          The partition payload from the fetch request.
   */
 class SessionlessFetchContext(val fetchData: util.Map[TopicIdPartition, FetchRequest.PartitionData]) extends FetchContext {
   override def getFetchOffset(part: TopicIdPartition): Option[Long] =
@@ -385,7 +385,7 @@ class SessionlessFetchContext(val fetchData: util.Map[TopicIdPartition, FetchReq
   * @param time               The clock to use.
   * @param cache              The fetch session cache.
   * @param reqMetadata        The request metadata.
-  * @param fetchData          The partition data from the fetch request.
+  * @param fetchData          The partition payload from the fetch request.
   * @param usesTopicIds       True if this session should use topic IDs.
   * @param isFromFollower     True if this fetch request came from a follower.
   */

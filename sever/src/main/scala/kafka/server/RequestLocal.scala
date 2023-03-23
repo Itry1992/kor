@@ -11,7 +11,7 @@ object RequestLocal {
 /**
  * Container for stateful instances where the lifecycle is scoped to one request.
  *
- * When each request is handled by one thread, efficient data structures with no locking or atomic operations
+ * When each request is handled by one thread, efficient payload structures with no locking or atomic operations
  * can be used (see RequestLocal.withThreadConfinedCaching).
  */
 case class RequestLocal(bufferSupplier: BufferSupplier) {

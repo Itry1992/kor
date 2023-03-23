@@ -8,6 +8,8 @@ import com.tong.kafka.manager.vo.TlqBrokerNode;
 import com.tong.kafka.manager.vo.TopicMetaData;
 import com.tong.kafka.tlq.TlqPool;
 import com.tongtech.client.admin.TLQManager;
+import com.tongtech.slf4j.Logger;
+import com.tongtech.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -15,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 
 public class AdapterManager extends AbstractManager {
+    Logger logger = LoggerFactory.getLogger(AdapterManager.class);
     //cache topic,-> {broker_id,part_index}
     private volatile Set<String> queryIngTopics = new CopyOnWriteArraySet<>();
     private volatile CompletableFuture<Void> queryIngFuture = CompletableFuture.completedFuture(null);
@@ -117,16 +120,16 @@ public class AdapterManager extends AbstractManager {
         } catch (CommonKafkaException e) {
             queryIngFuture.completeExceptionally(e);
         }
-        Set<String> queryIngTopics1 = Collections.unmodifiableSet(queryIngTopics);
-        boolean queryAll1 = queryAll;
         //查询之前重置带查询数据，查询期间其他线程可以添加待查询的数据
         synchronized (this) {
             if (queryIng) return queryIngFuture;
+            Set<String> queryIngTopics_ = Collections.unmodifiableSet(queryIngTopics);
+            boolean queryAll_ = queryAll;
             queryIng = true;
             queryIngTopics.clear();
             queryAll = false;
 
-            ArrayList<String> queryTopics = new ArrayList<>(queryIngTopics1);
+            ArrayList<String> queryTopics = new ArrayList<>(queryIngTopics_);
             assert tlqManager != null;
             CompletableFuture<List<com.tongtech.client.admin.TopicPartition>> completableFuture = tlqManager.partitionsFor(tlqManager.getDomain(), queryAll, queryTopics, 3000);
             queryIngFuture = completableFuture.thenAccept((result) -> {
@@ -156,15 +159,16 @@ public class AdapterManager extends AbstractManager {
                     CacheTopicMetadata cacheTopicMetadata = new CacheTopicMetadata(topicMetadataAliveTime).setTopicMetaData(topicMetaData);
                     cacheTopicMetadataMap.put(k, cacheTopicMetadata);
                 });
-                if (queryAll1) {
+                if (queryAll_) {
                     allAliveTime = System.currentTimeMillis() + topicMetadataAliveTime;
                 }
             }).whenComplete((v, ex) -> {
                 synchronized (this) {
                     if (ex != null) {
+                        logger.error("get topic metadata fail ,error {}", ex);
                         //如果查询失败，添加上次查询的数据
-                        queryIngTopics.addAll(queryIngTopics1);
-                        queryAll = queryAll1;
+                        queryIngTopics.addAll(queryIngTopics_);
+                        queryAll = queryAll_;
                     }
                     queryIng = false;
                 }

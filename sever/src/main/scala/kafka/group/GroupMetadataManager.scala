@@ -932,7 +932,7 @@ class GroupMetadataManager(brokerId: Int,
  * Messages stored for the group topic has versions for both the key and value fields. Key
  * version is used to indicate the type of the message (also to differentiate different types
  * of messages from being compacted together if they have the same field values); and value
- * version is used to evolve the messages within their data types:
+ * version is used to evolve the messages within their payload types:
  *
  * key version 0:       group consumption offset
  * -> value version 0:       [offset, metadata, timestamp]

@@ -83,7 +83,7 @@ class SocketServer(val config: KafkaConfig,
 
   def createSampleAcceptorAndProcessors(endpoint: EndPoint): Unit = synchronized {
     if (stopped) {
-      throw new RuntimeException("Can't create new data plane acceptor and processors: SocketServer is stopped.")
+      throw new RuntimeException("Can't create new payload plane acceptor and processors: SocketServer is stopped.")
     }
     val parsedConfigs = config.valuesFromThisConfigWithPrefixOverride(endpoint.listenerName.configPrefix)
     connectionQuotas.addListener(config, endpoint.listenerName)
@@ -91,7 +91,7 @@ class SocketServer(val config: KafkaConfig,
     val dataPlaneAcceptor = createSampleAcceptor(endpoint, isPrivilegedListener, requestChannel)
     dataPlaneAcceptor.configure(parsedConfigs)
     acceptors.put(endpoint, dataPlaneAcceptor)
-    info(s"Created data-plane acceptor and processors for endpoint : ${endpoint.listenerName}")
+    info(s"Created payload-plane acceptor and processors for endpoint : ${endpoint.listenerName}")
   }
 
   protected def createSampleAcceptor(endPoint: EndPoint, isPrivilegedListener: Boolean, requestChannel: RequestChannel): SampleAcceptor = {

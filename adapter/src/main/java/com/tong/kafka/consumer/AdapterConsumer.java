@@ -143,6 +143,9 @@ public class AdapterConsumer extends AbsTlqConsumer {
                                 TopicPartitionOffsetData value = new TopicPartitionOffsetData(requestTp);
                                 value.setOffset(resTp.get().getValue().getCommitOffset());
                                 tpToData.put(requestTp, value);
+                                Optional<TopicPartition> topicPartition = requestTps.stream().filter(tp -> tp.topic().equals(resTp.get().getKey().getTopic())).findFirst();
+                                assert topicPartition.isPresent();
+                                cacheCommitOffset(groupId, topicPartition.get(), resTp.get().getValue());
                             } else {
                                 TopicPartitionOffsetData value = new TopicPartitionOffsetData(requestTp);
                                 value.setOffset(OffsetFetchResponse.INVALID_OFFSET);
@@ -202,7 +205,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
                         TopicPartition topicPartition = req.getTopicPartition();
                         TopicPartitionOffsetData value = new TopicPartitionOffsetData(topicPartition);
                         Optional<Map.Entry<com.tongtech.client.admin.TopicPartition, OffsetAndTimestamp>> findInRes = res.entrySet().stream().filter(en -> isTopicEq(en.getKey(), topicPartition)).findAny();
-                        if (findInRes.isPresent()) {
+                        if (findInRes.isPresent() && findInRes.get().getValue().getOffset() > -1) {
                             long offset = findInRes.get().getValue().getOffset();
                             value.setOffset(offset);
                             if (offset == TopicPartitionOffsetData.INVALID_OFFSET) {
@@ -275,7 +278,7 @@ public class AdapterConsumer extends AbsTlqConsumer {
                                 }
                                 resultMap.put(req.getKey(), Errors.NONE);
                                 //同时保存到本地缓存中
-                                cacheCommitOffset(groupId, req, topicCommitOffset);
+                                cacheCommitOffset(groupId, req.getKey(), topicCommitOffset);
                             }
                         });
                         return true;
@@ -284,10 +287,13 @@ public class AdapterConsumer extends AbsTlqConsumer {
         return CompletableFuture.allOf(futureStream.toArray(CompletableFuture[]::new)).thenApply((r) -> resultMap);
     }
 
-    private void cacheCommitOffset(String groupId, Map.Entry<TopicPartition, CommitOffsetRequest> req, TopicCommitOffset topicCommitOffset) {
-        String commitCacheKey = getCommitCacheKey(groupId, req.getKey());
+    private void cacheCommitOffset(String groupId, TopicPartition topicPartition, TopicCommitOffset topicCommitOffset) {
+        if (topicCommitOffset.getCommitTime() <= 0) {
+            topicCommitOffset.setCommitTime((int) (System.currentTimeMillis() / 1000));
+        }
+        String commitCacheKey = getCommitCacheKey(groupId, topicPartition);
         if (committedOffsetCache.get(commitCacheKey) == null || committedOffsetCache.get(commitCacheKey).getOffsetCommitTime() < topicCommitOffset.getCommitTime()) {
-            TopicPartitionOffsetCacheData cacheData = new TopicPartitionOffsetCacheData(req.getKey());
+            TopicPartitionOffsetCacheData cacheData = new TopicPartitionOffsetCacheData(topicPartition);
             cacheData.setOffset(topicCommitOffset.getCommitOffset());
             cacheData.setOffsetCommitTime((long) topicCommitOffset.getCommitTime());
             committedOffsetCache.put(commitCacheKey, cacheData);
