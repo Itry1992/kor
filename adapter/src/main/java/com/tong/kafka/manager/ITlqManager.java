@@ -1,6 +1,7 @@
 package com.tong.kafka.manager;
 
 import com.tong.kafka.common.TopicPartition;
+import com.tong.kafka.exception.CommonKafkaException;
 import com.tong.kafka.manager.vo.TlqBrokerNode;
 import com.tong.kafka.manager.vo.TopicMetaData;
 
@@ -54,6 +55,10 @@ public interface ITlqManager {
     boolean hasTopicPartition(TopicPartition tp);
 
     void clearCache(String topic);
+
+    //todo 启动之前判断域名是否纯在
+    //todo 现在对离线的broker会返回-1，需要特殊处理
+    boolean isDomainExist(String domainName) throws CommonKafkaException;
 
 
 }

@@ -72,6 +72,15 @@ class AdapterSever(time: Time = Time.SYSTEM, brokerId: Int, host: Node, val conf
       adapterScheduler = new AdapterSchedulerImpl(1)
       tlqPool = new TlqPool(adapterScheduler, config)
       val tlqManager = new AdapterManager(tlqPool, config.getAdapterTopicMetadataCacheTimeMs)
+      try {
+        tlqManager.isDomainExist(config.getDomainName)
+      } catch {
+        case e: Exception => {
+          error(s"查询通信域失败，请检查配置项 ${KAdapterConfig.DomainName}", e)
+          isStartingUp.set(false);
+          shutdown()
+        }
+      }
       val tlqProduce = new AdapterProduce(tlqPool, tlqManager)
       val tlqConsumer = new AdapterConsumer(tlqManager, tlqPool, adapterScheduler)
       val coordinator = GroupCoordinator(config, Time.SYSTEM, topicManager)

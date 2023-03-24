@@ -70,6 +70,10 @@ public class MockManager extends AbstractManager {
 
     @Override
     public void clearCache(String topic) {
+    }
 
+    @Override
+    public boolean isDomainExist(String d) {
+        return true;
     }
 }

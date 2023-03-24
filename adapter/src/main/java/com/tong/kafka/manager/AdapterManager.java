@@ -8,6 +8,8 @@ import com.tong.kafka.manager.vo.TlqBrokerNode;
 import com.tong.kafka.manager.vo.TopicMetaData;
 import com.tong.kafka.tlq.TlqPool;
 import com.tongtech.client.admin.TLQManager;
+import com.tongtech.client.exception.TLQClientException;
+import com.tongtech.client.remoting.exception.RemotingException;
 import com.tongtech.slf4j.Logger;
 import com.tongtech.slf4j.LoggerFactory;
 
@@ -78,25 +80,42 @@ public class AdapterManager extends AbstractManager {
 
     @Override
     public CompletableFuture<Map<String, TopicMetaData>> getAllTopicMetaData() {
+        if (allAliveTime > System.currentTimeMillis()) {
+            queryAll = true;
+            doQuery();
+            return CompletableFuture.completedFuture(getAllResultFromCache());
+        }
         queryAll = true;
         return doQuery().thenCompose((v) -> {
             if (allAliveTime < System.currentTimeMillis()) {
                 return getAllTopicMetaData();
             }
-            HashMap<String, TopicMetaData> result = new HashMap<>();
-            cacheTopicMetadataMap.forEach((k, r) -> {
-                Optional<TopicMetaData> topicMetaData = r.get(true);
-                assert topicMetaData.isPresent();
-                result.put(k, topicMetaData.get());
-            });
+            HashMap<String, TopicMetaData> result = getAllResultFromCache();
             return CompletableFuture.completedFuture(result);
         });
+    }
+
+    private HashMap<String, TopicMetaData> getAllResultFromCache() {
+        HashMap<String, TopicMetaData> result = new HashMap<>();
+        cacheTopicMetadataMap.forEach((k, r) -> {
+            Optional<TopicMetaData> topicMetaData = r.get(true);
+            assert topicMetaData.isPresent();
+            result.put(k, topicMetaData.get());
+        });
+        return result;
     }
 
     @Override
     public Optional<TlqBrokerNode> getTlqBrokerNode(TopicPartition topicPartition) {
         return cacheTopicMetadataMap.get(topicPartition.topic()).get(true)
-                .map(r -> r.getBind().get(topicPartition.partition()));
+                .map(r -> {
+                    TlqBrokerNode tlqBrokerNode = r.getBind().get(topicPartition.partition());
+                    if (tlqBrokerNode.getBrokerId() <= 0) {
+                        clearCache(topicPartition.topic());
+                        return null;
+                    }
+                    return tlqBrokerNode;
+                });
     }
 
     @Override
@@ -151,7 +170,11 @@ public class AdapterManager extends AbstractManager {
                     HashMap<Integer, TlqBrokerNode> bind = new HashMap<>();
                     v.forEach(tp -> {
                         TlqBrokerNode node = new TlqBrokerNode();
-                        node.setBrokerId(tp.getBrokerId());
+                        Integer brokerId = tp.getBrokerId();
+                        if (brokerId <= 0) {
+                            brokerId = -1;
+                        }
+                        node.setBrokerId(brokerId);
                         node.setAddr(tp.getAddr());
                         bind.put(tp.getPartition(), node);
                     });
@@ -180,5 +203,15 @@ public class AdapterManager extends AbstractManager {
     @Override
     public void clearCache(String topic) {
         this.cacheTopicMetadataMap.remove(topic);
+    }
+
+    @Override
+    public boolean isDomainExist(String domainName) throws CommonKafkaException {
+        TLQManager tlqManager = tlqPool.getManager().orElseThrow(() -> new CommonKafkaException(Errors.UNKNOWN_SERVER_ERROR));
+        try {
+            return tlqManager.queryDomainExist(domainName);
+        } catch (RemotingException | InterruptedException | TLQClientException e) {
+            throw new CommonKafkaException(Errors.UNKNOWN_SERVER_ERROR);
+        }
     }
 }
