@@ -3,4 +3,5 @@ include 'base'
 include 'server_common'
 include 'sever'
 include 'adapter'
+include 'raft'
 
